@@ -5,8 +5,9 @@ Tested on Alfresco 4.2.8
 level,parentNodeId,childNodeId,NodeName,NodeType
 
 # Installation
-Deploy the JAR into WEB-INF/lib
-Copy log4j.properties to tomcat/shared/classes/alfresco/extension
+
+- Deploy the JAR into WEB-INF/lib
+- Copy log4j.properties to tomcat/shared/classes/alfresco/extension
 
 # Usage
 ## Start the dump process
