@@ -9,6 +9,12 @@
         <property name="rootNodeListInput">
             <value>C:/tmp/rootnodes.csv</value>
         </property>
+        <property name="checkPhysicalExistence">
+            <value>true</value>
+        </property>
+        <property name="contentStoreBase">
+            <value>C:/Alfresco4/alf_data/contentstore</value>
+        </property>
     </bean>
 
     <bean id="webscript.com.swisscom.treedump.get"

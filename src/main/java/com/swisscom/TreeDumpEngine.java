@@ -3,10 +3,7 @@ package com.swisscom;
 import org.alfresco.model.ContentModel;
 import org.alfresco.repo.security.authentication.AuthenticationUtil;
 import org.alfresco.service.ServiceRegistry;
-import org.alfresco.service.cmr.repository.ChildAssociationRef;
-import org.alfresco.service.cmr.repository.NodeRef;
-import org.alfresco.service.cmr.repository.NodeService;
-import org.alfresco.service.cmr.repository.StoreRef;
+import org.alfresco.service.cmr.repository.*;
 import org.alfresco.service.namespace.NamespaceService;
 import org.alfresco.service.namespace.QName;
 import org.alfresco.service.namespace.RegexQNamePattern;
@@ -26,6 +23,8 @@ import java.util.concurrent.TimeUnit;
 public class TreeDumpEngine {
     private String csvOutputDir;
     private String rootNodeListInput;
+    private Boolean checkPhysicalExistence;
+    private String contentStoreBase;
     private static final QName FOLDER_TYPE = QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "folder");
     private static final QName FILE_TYPE = QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "content");
     private Log log = LogFactory.getLog(TreeDumpEngine.class);
@@ -48,19 +47,27 @@ public class TreeDumpEngine {
         this.rootNodeListInput = rootNodeListInput;
     }
 
-    void startAndWait(){
+    public void setCheckPhysicalExistence(Boolean checkPhysicalExistence) {
+        this.checkPhysicalExistence = checkPhysicalExistence;
+    }
+
+    public void setContentStoreBase(String contentStoreBase) {
+        this.contentStoreBase = contentStoreBase;
+    }
+
+    void startAndWait() {
         nodeService = serviceRegistry.getNodeService();
         namespaceService = serviceRegistry.getNamespaceService();
+        if (checkPhysicalExistence == null) checkPhysicalExistence = true;
 
         List<NodeRef> startNodes = new ArrayList<>();
-        try(BufferedReader bufferedReader =
-                    new BufferedReader(new FileReader(rootNodeListInput))){
+        try (BufferedReader bufferedReader =
+                     new BufferedReader(new FileReader(rootNodeListInput))) {
             String line;
-            while((line = bufferedReader.readLine()) != null){
+            while ((line = bufferedReader.readLine()) != null) {
                 startNodes.add(new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, line));
             }
-        }
-        catch (IOException e){
+        } catch (IOException e) {
             log.error(e);
             return;
         }
@@ -93,7 +100,7 @@ public class TreeDumpEngine {
         log.info("TreeDump finished");
     }
 
-    void shutdown(){
+    void shutdown() {
         this.dumpTreeTask.cancel(true);
         this.forkJoinPool.shutdownNow();
         log.info("TreeDump shutdown");
@@ -116,11 +123,11 @@ public class TreeDumpEngine {
         public void compute() {
             AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
             try {
-                for (NodeRef parent : startNodes){
+                for (NodeRef parent : startNodes) {
                     dumpChildrenToCsv(parent);
                     processSubFoldersRecursively(parent);
                 }
-            } catch (Exception e){
+            } catch (Exception e) {
                 log.error(e);
             }
         }
@@ -145,24 +152,33 @@ public class TreeDumpEngine {
 
         private void dumpChildrenToCsv(NodeRef parent) throws IOException {
             List<ChildAssociationRef> childAssocs =
-                    nodeService.getChildAssocs(parent, ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL );
+                    nodeService.getChildAssocs(parent, ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL);
             if (childAssocs.size() > 0) {
-                try(BufferedWriter csvWriter = new BufferedWriter(
+                try (BufferedWriter csvWriter = new BufferedWriter(
                         new OutputStreamWriter(
-                                new FileOutputStream(csvOutFile.toFile(),true), StandardCharsets.UTF_8))) {
+                                new FileOutputStream(csvOutFile.toFile(), true), StandardCharsets.UTF_8))) {
                     for (ChildAssociationRef assoc : childAssocs) {
                         QName childNodeType = nodeService.getType(assoc.getChildRef());
-                        if (childNodeType.equals(FOLDER_TYPE)){
+                        if (childNodeType.equals(FOLDER_TYPE)) {
                             subFolderNodes.add(assoc.getChildRef());
                         }
-                        writeCsvLIne(csvWriter, assoc.getParentRef().getId(), assoc.getChildRef().getId(),
-                                assoc.getQName().getLocalName(), childNodeType, recursionLevel);
+                        if (!childNodeType.equals(FILE_TYPE)
+                                || (!checkPhysicalExistence || existsOnDisk(assoc.getChildRef()))) {
+                            writeCsvLIne(csvWriter, assoc.getParentRef().getId(), assoc.getChildRef().getId(),
+                                    assoc.getQName().getLocalName(), childNodeType, recursionLevel);
+                        }
                     }
-                }
-                catch (FileNotFoundException e) {
+                } catch (FileNotFoundException e) {
                     log.error(e);
                 }
             }
+        }
+
+        private boolean existsOnDisk(NodeRef childRef) {
+            ContentData contentData = (ContentData) nodeService.getProperty(childRef, QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "content"));
+            String contentURL = contentData.getContentUrl();
+            String contentLocationWithinStore = contentURL.replace("store://", "");
+            return Files.exists(Paths.get(contentStoreBase, contentLocationWithinStore));
         }
 
         private void dumpNodeRecursively(NodeRef rootNode, NodeService nodeService, BufferedWriter csvWriter, int level)
@@ -174,7 +190,7 @@ public class TreeDumpEngine {
                 QName childNodeType = nodeService.getType(assoc.getChildRef());
                 writeCsvLIne(csvWriter, assoc.getParentRef().getId(), assoc.getChildRef().getId(),
                         assoc.getQName().getLocalName(), childNodeType, level);
-                if (childNodeType.equals(FOLDER_TYPE)){
+                if (childNodeType.equals(FOLDER_TYPE)) {
                     dumpNodeRecursively(assoc.getChildRef(), nodeService, csvWriter, level);
                 }
             }
