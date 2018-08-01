@@ -3,6 +3,7 @@
 <beans>
     <bean id="treeDumpEngine" class="com.andreikubar.alfresco.migration.TreeDumpEngine">
         <constructor-arg ref="ServiceRegistry"/>
+        <property name="exportNodeBuilder" ref="exportNodeBuilder"/>
         <property name="csvOutputDir">
             <value>C:/tmp/alfresco</value>
         </property>
@@ -15,6 +16,11 @@
         <property name="contentStoreBase">
             <value>C:/Alfresco4/alf_data/contentstore</value>
         </property>
+
+    </bean>
+
+    <bean id="exportNodeBuilder" class="com.andreikubar.alfresco.migration.export.ExportNodeBuilder">
+        <property name="serviceRegistry" ref="ServiceRegistry"/>
         <property name="useCmName">
             <value>true</value>
         </property>

@@ -1,5 +1,7 @@
 package com.andreikubar.alfresco.migration;
 
+import com.andreikubar.alfresco.migration.export.ExportNode;
+import com.andreikubar.alfresco.migration.export.ExportNodeBuilder;
 import org.alfresco.model.ContentModel;
 import org.alfresco.repo.security.authentication.AuthenticationUtil;
 import org.alfresco.service.ServiceRegistry;
@@ -27,11 +29,10 @@ public class TreeDumpEngine {
     private String rootNodeListInput;
     private Boolean checkPhysicalExistence;
     private String contentStoreBase;
-    private Boolean useCmName;
-    private static final QName FOLDER_TYPE = QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "folder");
-    private static final QName FILE_TYPE = QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "content");
+
     private Log log = LogFactory.getLog(TreeDumpEngine.class);
     private ServiceRegistry serviceRegistry;
+    private ExportNodeBuilder exportNodeBuilder;
     private NodeService nodeService;
     private NamespaceService namespaceService;
     private DictionaryService dictionaryService;
@@ -46,7 +47,6 @@ public class TreeDumpEngine {
         namespaceService = serviceRegistry.getNamespaceService();
         dictionaryService = serviceRegistry.getDictionaryService();
         if (checkPhysicalExistence == null) checkPhysicalExistence = true;
-        if (useCmName == null) useCmName = true;
     }
 
     public void setCsvOutputDir(String csvOutputDir) {
@@ -57,16 +57,16 @@ public class TreeDumpEngine {
         this.rootNodeListInput = rootNodeListInput;
     }
 
-    public void setUseCmName(Boolean useCmName) {
-        this.useCmName = useCmName;
-    }
-
     public void setCheckPhysicalExistence(Boolean checkPhysicalExistence) {
         this.checkPhysicalExistence = checkPhysicalExistence;
     }
 
     public void setContentStoreBase(String contentStoreBase) {
         this.contentStoreBase = contentStoreBase;
+    }
+
+    public void setExportNodeBuilder(ExportNodeBuilder exportNodeBuilder) {
+        this.exportNodeBuilder = exportNodeBuilder;
     }
 
     void startAndWait() {
@@ -76,9 +76,11 @@ public class TreeDumpEngine {
                      new BufferedReader(new FileReader(rootNodeListInput))) {
             String line;
             while ((line = bufferedReader.readLine()) != null) {
-                NodeRef startParentNode = new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, line);
-                String startParentNodeName  = (String)nodeService.getProperty(startParentNode, ContentModel.PROP_NAME);
-                startNodes.add(new ExportNode(new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, line), "/" + startParentNodeName));
+                ExportNode startNode = new ExportNode();
+                startNode.nodeRef = new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, line);
+                startNode.name = (String)nodeService.getProperty(startNode.nodeRef, ContentModel.PROP_NAME);
+                startNode.fullPath = "/" + startNode.name;
+                startNodes.add(startNode);
             }
         } catch (IOException e) {
             log.error("Failed to read the root node list", e);
@@ -106,12 +108,11 @@ public class TreeDumpEngine {
 
         /* TODO: remove the overridden values */
         checkPhysicalExistence = true;
-        useCmName = true;
 
         log.info(String.format("TreeDump starting - %s", startDateTime));
         log.info(String.format("Check existence on disk: %s", checkPhysicalExistence));
         log.info(String.format("     Content store base: %s", contentStoreBase));
-        log.info(String.format("          Get cm:name's: %s", useCmName));
+        log.info(String.format("          Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
         log.info(String.format("   Root nodes read from: %s", rootNodeListInput));
         log.info(String.format("     Results written to: %s", csvOutputDir));
         dumpTreeTask = new TreeDumperTask(startNodes, 0);
@@ -210,15 +211,17 @@ public class TreeDumpEngine {
             if (childAssocs.size() > 0) {
                 try {
                     for (ChildAssociationRef assoc : childAssocs) {
-                        QName childNodeType = nodeService.getType(assoc.getChildRef());
-                        String childNodeName = getChildNodeName(assoc);
-                        boolean isFolder = dictionaryService.isSubClass(childNodeType, FOLDER_TYPE);
-                        if (isFolder) {
-                            subFolders.add(new ExportNode(assoc.getChildRef(), parentNode.fullPath + "/" + childNodeName));
+                        ExportNode childNode = exportNodeBuilder.constructExportNode(assoc, parentNode.fullPath);
+                        if (childNode.isFolder) {
+                            subFolders.add(childNode);
                         }
-                        if (checkExistenceForFilesAndOnlyIfRequested(assoc, childNodeType)) {
-                            writeCsvLine(threadWriters.get(Thread.currentThread().getName()), assoc.getParentRef().getId(), assoc.getChildRef().getId(),
-                                    childNodeName, childNodeType, recursionLevel, isFolder, parentNode.fullPath);
+                        if (checkExistenceForFilesAndOnlyIfRequested(childNode)) {
+                            writeCsvLine(
+                                    threadWriters.get(Thread.currentThread().getName()),
+                                    assoc.getParentRef().getId(),
+                                    assoc.getChildRef().getId(),
+                                    childNode.name, childNode.nodeType, recursionLevel,
+                                    childNode.isFolder, parentNode.fullPath);
                         }
                     }
                 } catch (FileNotFoundException e) {
@@ -227,20 +230,9 @@ public class TreeDumpEngine {
             }
         }
 
-        private boolean checkExistenceForFilesAndOnlyIfRequested(ChildAssociationRef assoc, QName childNodeType) {
-            return !dictionaryService.isSubClass(childNodeType, FILE_TYPE)
-                    || (!checkPhysicalExistence || existsOnDisk(assoc.getChildRef()));
-        }
-
-        private String getChildNodeName(ChildAssociationRef assoc) {
-            String childNodeName;
-            if (useCmName) {
-                childNodeName = (String) nodeService.getProperty(assoc.getChildRef(), ContentModel.PROP_NAME);
-            }
-            else {
-                childNodeName = assoc.getQName().getLocalName();
-            }
-            return childNodeName;
+        private boolean checkExistenceForFilesAndOnlyIfRequested(ExportNode exportNode) {
+            return !exportNode.isFile
+                    || (!checkPhysicalExistence || existsOnDisk(exportNode.nodeRef));
         }
 
         private boolean existsOnDisk(NodeRef childRef) {
@@ -252,21 +244,6 @@ public class TreeDumpEngine {
             boolean fileExists = Files.exists(pathToCheck);
             if (!fileExists) log.debug(String.format("existence check %s for: %s", "FAILED", pathToCheck.toString()));
             return fileExists;
-        }
-
-        private void dumpNodeRecursively(NodeRef rootNode, NodeService nodeService, BufferedWriter csvWriter, int level)
-                throws IOException {
-            List<ChildAssociationRef> childAssocs = nodeService.getChildAssocs(rootNode, ContentModel.ASSOC_CONTAINS,
-                    RegexQNamePattern.MATCH_ALL);
-            level++;
-            for (ChildAssociationRef assoc : childAssocs) {
-                QName childNodeType = nodeService.getType(assoc.getChildRef());
-                writeCsvLine(csvWriter, assoc.getParentRef().getId(), assoc.getChildRef().getId(),
-                        assoc.getQName().getLocalName(), childNodeType, level, childNodeType.equals(FOLDER_TYPE),"");
-                if (childNodeType.equals(FOLDER_TYPE)) {
-                    dumpNodeRecursively(assoc.getChildRef(), nodeService, csvWriter, level);
-                }
-            }
         }
 
         private void writeCsvLine(BufferedWriter csvWriter, String parentId, String childId, String nodeLocalName,
@@ -283,15 +260,5 @@ public class TreeDumpEngine {
             csvWriter.append(csvLine);
         }
 
-    }
-
-    private class ExportNode {
-        private NodeRef nodeRef;
-        private String fullPath;
-
-        ExportNode(NodeRef nodeRef, String fullPath) {
-            this.nodeRef = nodeRef;
-            this.fullPath = fullPath;
-        }
     }
 }
