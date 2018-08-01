@@ -1,4 +1,4 @@
-package com.swisscom;
+package com.mimacom.alfresco.migration;
 
 import org.springframework.extensions.webscripts.Cache;
 import org.springframework.extensions.webscripts.DeclarativeWebScript;
@@ -12,7 +12,7 @@ import java.util.concurrent.Executors;
 
 public class TreeDump extends DeclarativeWebScript {
 
-    TreeDumpEngine treeDumpEngine;
+    private TreeDumpEngine treeDumpEngine;
 
     public TreeDump(TreeDumpEngine treeDumpEngine) {
         this.treeDumpEngine = treeDumpEngine;

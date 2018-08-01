@@ -1,4 +1,4 @@
-package com.swisscom;
+package com.mimacom.alfresco.migration;
 
 import org.springframework.extensions.webscripts.Cache;
 import org.springframework.extensions.webscripts.DeclarativeWebScript;
@@ -10,7 +10,7 @@ import java.util.Map;
 
 public class TreeDumpShutdown extends DeclarativeWebScript {
 
-    TreeDumpEngine treeDumpEngine;
+    private TreeDumpEngine treeDumpEngine;
 
     public TreeDumpShutdown(TreeDumpEngine treeDumpEngine) {
         this.treeDumpEngine = treeDumpEngine;

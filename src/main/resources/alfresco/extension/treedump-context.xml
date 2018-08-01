@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <!DOCTYPE beans PUBLIC '-//SPRING//DTD BEAN//EN' 'http://www.springframework.org/dtd/spring-beans.dtd'>
 <beans>
-    <bean id="treeDumpEngine" class="com.swisscom.TreeDumpEngine">
+    <bean id="treeDumpEngine" class="com.mimacom.alfresco.migration.TreeDumpEngine">
         <constructor-arg ref="ServiceRegistry"/>
         <property name="csvOutputDir">
             <value>C:/tmp/alfresco</value>
@@ -15,15 +15,18 @@
         <property name="contentStoreBase">
             <value>C:/Alfresco4/alf_data/contentstore</value>
         </property>
+        <property name="useCmName">
+            <value>true</value>
+        </property>
     </bean>
 
     <bean id="webscript.com.swisscom.treedump.get"
-          class="com.swisscom.TreeDump" parent="webscript">
+          class="com.mimacom.alfresco.migration.TreeDump" parent="webscript">
         <constructor-arg ref="treeDumpEngine"/>
     </bean>
 
     <bean id="webscript.com.swisscom.treedump-shutdown.get"
-          class="com.swisscom.TreeDumpShutdown" parent="webscript">
+          class="com.mimacom.alfresco.migration.TreeDumpShutdown" parent="webscript">
         <constructor-arg ref="treeDumpEngine"/>
     </bean>
 </beans>
