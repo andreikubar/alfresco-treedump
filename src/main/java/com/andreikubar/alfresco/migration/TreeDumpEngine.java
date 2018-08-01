@@ -1,4 +1,4 @@
-package com.mimacom.alfresco.migration;
+package com.andreikubar.alfresco.migration;
 
 import org.alfresco.model.ContentModel;
 import org.alfresco.repo.security.authentication.AuthenticationUtil;

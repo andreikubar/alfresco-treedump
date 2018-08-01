@@ -1,4 +1,4 @@
-package com.mimacom.alfresco.migration;
+package com.andreikubar.alfresco.migration;
 
 import org.springframework.extensions.webscripts.Cache;
 import org.springframework.extensions.webscripts.DeclarativeWebScript;
