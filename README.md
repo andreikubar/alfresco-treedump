@@ -1,8 +1,8 @@
 # Dumps the file tree starting from a list of given NodeId's into a csv
-Tested on Alfresco 4.2.8
+Tested on Alfresco 4.2.8, 5.2.3
 
 ## CSV Format:
-level,parentNodeId,childNodeId,NodeName,NodeType
+level,parentNodeId,childNodeId,NodeName,NodeType,isFolder,FullPath
 
 # Installation
 
