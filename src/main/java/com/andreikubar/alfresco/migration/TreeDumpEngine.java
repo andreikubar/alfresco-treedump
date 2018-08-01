@@ -36,6 +36,7 @@ public class TreeDumpEngine {
     private NamespaceService namespaceService;
     private DictionaryService dictionaryService;
     private TreeDumperTask dumpTreeTask;
+    private Map<String, BufferedWriter> threadWriters;
 
     private ForkJoinPool forkJoinPool;
 
@@ -96,12 +97,14 @@ public class TreeDumpEngine {
         }
 
         if (forkJoinPool == null) forkJoinPool = new ForkJoinPool();
+        threadWriters = new HashMap<>();
 
         Calendar cal = Calendar.getInstance();
         SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
         String startDateTime = sdf.format(cal.getTime());
         long startTime = System.currentTimeMillis();
 
+        /* TODO: remove the overridden values */
         checkPhysicalExistence = true;
         useCmName = true;
 
@@ -127,6 +130,15 @@ public class TreeDumpEngine {
             }
         } while (!dumpTreeTask.isDone());
 
+        for (BufferedWriter writer : threadWriters.values()){
+            try {
+                writer.close();
+            } catch (IOException e) {
+                log.error("Failed to close BufferedWriter", e);
+            }
+        }
+        threadWriters.clear();
+
         log.info("TreeDump finished");
         log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - startTime)/1000 ));
     }
@@ -142,8 +154,6 @@ public class TreeDumpEngine {
         private List<ExportNode> parentNodes;
         private List<ExportNode> subFolders = new ArrayList<>(50);
         private int recursionLevel;
-        private Path csvOutFile = Paths.get(csvOutputDir,
-                String.format("%s-%s.csv", "treedump", Thread.currentThread().getName()));
 
         TreeDumperTask(List<ExportNode> parentNodes, int recursionLevel) {
             this.parentNodes = parentNodes;
@@ -152,6 +162,19 @@ public class TreeDumpEngine {
 
         @Override
         public void compute() {
+            if (!threadWriters.containsKey(Thread.currentThread().getName())){
+                try {
+                    Path csvOutFile = Paths.get(csvOutputDir,
+                            String.format("%s-%s.csv", "treedump", Thread.currentThread().getName()));
+                    BufferedWriter csvWriter = new BufferedWriter(
+                            new OutputStreamWriter(
+                                    new FileOutputStream(csvOutFile.toFile(), true), StandardCharsets.UTF_8));
+                    threadWriters.put(Thread.currentThread().getName(), csvWriter);
+                } catch (FileNotFoundException e) {
+                    log.error("Failed to open BufferedWriter", e);
+                }
+            }
+
             AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
             try {
                 for (ExportNode parentNode : parentNodes) {
@@ -185,9 +208,7 @@ public class TreeDumpEngine {
             List<ChildAssociationRef> childAssocs =
                     nodeService.getChildAssocs(parentNode.nodeRef, ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL);
             if (childAssocs.size() > 0) {
-                try (BufferedWriter csvWriter = new BufferedWriter(
-                        new OutputStreamWriter(
-                                new FileOutputStream(csvOutFile.toFile(), true), StandardCharsets.UTF_8))) {
+                try {
                     for (ChildAssociationRef assoc : childAssocs) {
                         QName childNodeType = nodeService.getType(assoc.getChildRef());
                         String childNodeName = getChildNodeName(assoc);
@@ -196,7 +217,7 @@ public class TreeDumpEngine {
                             subFolders.add(new ExportNode(assoc.getChildRef(), parentNode.fullPath + "/" + childNodeName));
                         }
                         if (checkExistenceForFilesAndOnlyIfRequested(assoc, childNodeType)) {
-                            writeCsvLIne(csvWriter, assoc.getParentRef().getId(), assoc.getChildRef().getId(),
+                            writeCsvLine(threadWriters.get(Thread.currentThread().getName()), assoc.getParentRef().getId(), assoc.getChildRef().getId(),
                                     childNodeName, childNodeType, recursionLevel, isFolder, parentNode.fullPath);
                         }
                     }
@@ -240,7 +261,7 @@ public class TreeDumpEngine {
             level++;
             for (ChildAssociationRef assoc : childAssocs) {
                 QName childNodeType = nodeService.getType(assoc.getChildRef());
-                writeCsvLIne(csvWriter, assoc.getParentRef().getId(), assoc.getChildRef().getId(),
+                writeCsvLine(csvWriter, assoc.getParentRef().getId(), assoc.getChildRef().getId(),
                         assoc.getQName().getLocalName(), childNodeType, level, childNodeType.equals(FOLDER_TYPE),"");
                 if (childNodeType.equals(FOLDER_TYPE)) {
                     dumpNodeRecursively(assoc.getChildRef(), nodeService, csvWriter, level);
@@ -248,7 +269,7 @@ public class TreeDumpEngine {
             }
         }
 
-        private void writeCsvLIne(BufferedWriter csvWriter, String parentId, String childId, String nodeLocalName,
+        private void writeCsvLine(BufferedWriter csvWriter, String parentId, String childId, String nodeLocalName,
                                   QName childNodeType, int level, boolean isFolder, String fullPath) throws IOException {
             String csvLine = String.format("%d,%s,%s,%s,%s,%s,%s\n",
                     level,
