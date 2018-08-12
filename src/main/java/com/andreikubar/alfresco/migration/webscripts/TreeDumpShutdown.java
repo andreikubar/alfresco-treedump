@@ -1,5 +1,6 @@
-package com.andreikubar.alfresco.migration;
+package com.andreikubar.alfresco.migration.webscripts;
 
+import com.andreikubar.alfresco.migration.TreeDumpEngine;
 import org.springframework.extensions.webscripts.Cache;
 import org.springframework.extensions.webscripts.DeclarativeWebScript;
 import org.springframework.extensions.webscripts.Status;

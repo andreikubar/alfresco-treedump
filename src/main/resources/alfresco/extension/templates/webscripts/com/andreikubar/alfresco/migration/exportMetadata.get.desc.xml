@@ -1,0 +1,7 @@
+<webscript>
+    <shortname>Export Node metadata</shortname>
+    <description>Java-backed implementation of Node Export utility
+    </description>
+    <url>/export/metadata</url>
+    <authentication>none</authentication>
+</webscript>

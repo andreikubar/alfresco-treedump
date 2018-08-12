@@ -1,7 +1,7 @@
 package com.andreikubar.alfresco.migration;
 
-import com.andreikubar.alfresco.migration.export.ExportNode;
-import com.andreikubar.alfresco.migration.export.ExportNodeBuilder;
+import com.andreikubar.alfresco.migration.exporter.model.ExportNode;
+import com.andreikubar.alfresco.migration.exporter.ExportNodeBuilder;
 import org.alfresco.model.ContentModel;
 import org.alfresco.repo.security.authentication.AuthenticationUtil;
 import org.alfresco.service.ServiceRegistry;
@@ -69,7 +69,7 @@ public class TreeDumpEngine {
         this.exportNodeBuilder = exportNodeBuilder;
     }
 
-    void startAndWait() {
+    public void startAndWait() {
         AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
         List<ExportNode> startNodes = new ArrayList<>();
         try (BufferedReader bufferedReader =
@@ -144,7 +144,7 @@ public class TreeDumpEngine {
         log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - startTime)/1000 ));
     }
 
-    void shutdown() {
+    public void shutdown() {
         this.dumpTreeTask.cancel(true);
         this.forkJoinPool.shutdownNow();
         log.info("TreeDump shutdown");

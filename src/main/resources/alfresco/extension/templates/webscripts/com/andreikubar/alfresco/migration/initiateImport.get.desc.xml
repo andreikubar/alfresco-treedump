@@ -1,0 +1,7 @@
+<webscript>
+    <shortname>Initiate Import</shortname>
+    <description>Java-backed implementation of Import utility
+    </description>
+    <url>/import/init</url>
+    <authentication>none</authentication>
+</webscript>

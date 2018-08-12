@@ -19,20 +19,39 @@
 
     </bean>
 
-    <bean id="exportNodeBuilder" class="com.andreikubar.alfresco.migration.export.ExportNodeBuilder">
-        <property name="serviceRegistry" ref="ServiceRegistry"/>
+    <bean id="exportService" class="com.andreikubar.alfresco.migration.exporter.ExportService">
+        <constructor-arg ref="ServiceRegistry"/>
+        <property name="exportNodeBuilder" ref="exportNodeBuilder"/>
+    </bean>
+
+    <bean id="exportNodeBuilder" class="com.andreikubar.alfresco.migration.exporter.ExportNodeBuilder">
+        <constructor-arg ref="ServiceRegistry"/>
         <property name="useCmName">
             <value>true</value>
         </property>
     </bean>
 
+    <bean id="importEngine" class="com.andreikubar.alfresco.migration.importer.ImportEngine">
+        <constructor-arg ref="ServiceRegistry"/>
+    </bean>
+
     <bean id="webscript.com.andreikubar.alfresco.migration.treedump.get"
-          class="com.andreikubar.alfresco.migration.TreeDump" parent="webscript">
+          class="com.andreikubar.alfresco.migration.webscripts.TreeDump" parent="webscript">
         <constructor-arg ref="treeDumpEngine"/>
     </bean>
 
     <bean id="webscript.com.andreikubar.alfresco.migration.treedump-shutdown.get"
-          class="com.andreikubar.alfresco.migration.TreeDumpShutdown" parent="webscript">
+          class="com.andreikubar.alfresco.migration.webscripts.TreeDumpShutdown" parent="webscript">
         <constructor-arg ref="treeDumpEngine"/>
+    </bean>
+
+    <bean id="webscript.com.andreikubar.alfresco.migration.initiateImport.get"
+          class="com.andreikubar.alfresco.migration.webscripts.InitiateImpotWebscript" parent="webscript">
+        <property name="importEngine" ref="importEngine"/>
+    </bean>
+
+    <bean id="webscript.com.andreikubar.alfresco.migration.exportMetadata.get"
+          class="com.andreikubar.alfresco.migration.webscripts.ExportMetadataWebscript" parent="webscript">
+        <property name="exportService" ref="exportService"/>
     </bean>
 </beans>
