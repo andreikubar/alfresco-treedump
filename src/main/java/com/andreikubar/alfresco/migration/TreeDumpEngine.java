@@ -246,17 +246,17 @@ public class TreeDumpEngine {
             return fileExists;
         }
 
-        private void writeCsvLine(BufferedWriter csvWriter, String parentId, String childId, String nodeLocalName,
-                                  QName childNodeType, int level, boolean isFolder, String fullPath) throws IOException {
-            String csvLine = String.format("%d,%s,%s,%s,%s,%s,%s\n",
+        private void writeCsvLine(BufferedWriter csvWriter, String parentId, String childId, String nodeName,
+                                  QName childNodeType, int level, boolean isFolder, String containingPath) throws IOException {
+            String csvLine = String.format("%d|%s|%s|%s|%s|%s|%s\n",
                     level,
                     parentId,
                     childId,
-                    nodeLocalName,
                     childNodeType.getPrefixedQName(namespaceService).getPrefixString(),
                     isFolder?"isFolder":"notAFolder",
-                    fullPath
-            );
+                    containingPath,
+                    nodeName
+                    );
             csvWriter.append(csvLine);
         }
 
