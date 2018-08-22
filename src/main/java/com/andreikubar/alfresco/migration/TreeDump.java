@@ -9,10 +9,13 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class TreeDump extends DeclarativeWebScript {
 
     private TreeDumpEngine treeDumpEngine;
+    private ExecutorService executorService;
+    private Future<?> treeDumpTask;
 
     public TreeDump(TreeDumpEngine treeDumpEngine) {
         this.treeDumpEngine = treeDumpEngine;
@@ -21,15 +24,22 @@ public class TreeDump extends DeclarativeWebScript {
     @Override
     protected Map<String, Object> executeImpl(WebScriptRequest req, Status status, Cache cache) {
         Map<String, Object> model = new HashMap<>();
-        ExecutorService executorService = Executors.newSingleThreadExecutor();
-        executorService.submit(new Runnable() {
-            @Override
-            public void run() {
-                treeDumpEngine.startAndWait();
-            }
-        });
+        if (executorService == null) {
+            executorService = Executors.newSingleThreadExecutor();
+        }
+        if (treeDumpTask == null || treeDumpTask.isDone()) {
+            treeDumpTask = executorService.submit(new Runnable() {
+                @Override
+                public void run() {
+                    treeDumpEngine.startAndWait();
+                }
+            });
+            model.put("result", "started");
+        }
+        else {
+            model.put("result", "already running");
+        }
 
-        model.put("result", "started");
         return model;
     }
 
