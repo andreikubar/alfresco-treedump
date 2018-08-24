@@ -2,7 +2,6 @@ package com.andreikubar.alfresco.migration.export.wireline;
 
 import com.andreikubar.alfresco.migration.export.ExportNode;
 import org.alfresco.model.ContentModel;
-import org.alfresco.repo.node.MLPropertyInterceptor;
 import org.alfresco.service.ServiceRegistry;
 import org.alfresco.service.cmr.repository.ContentData;
 import org.alfresco.service.cmr.repository.MLText;
@@ -11,6 +10,7 @@ import org.alfresco.service.cmr.security.AccessPermission;
 import org.alfresco.service.cmr.security.PermissionService;
 import org.alfresco.service.namespace.NamespaceService;
 import org.alfresco.service.namespace.QName;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -56,12 +56,7 @@ public class WirelineExportService {
     }
 
     public void writePropertyAndTranslationsFile(ExportNode node, Path exportDestination) {
-        MLPropertyInterceptor.setMLAware(true);
-        Map<QName, Serializable> properties = nodeService.getProperties(node.nodeRef);
-        MLPropertyInterceptor.setMLAware(false);
-        Map<String, String> convertedProperties = filterAndConvertWirelineProperties(properties);
-
-
+        Map<String, String> convertedProperties = filterAndConvertWirelineProperties(node.properties);
         Set<QName> aspects = nodeService.getAspects(node.nodeRef);
         List<String> convertedAspects = filterAndConvertWirelineAspects(aspects);
 
@@ -84,7 +79,7 @@ public class WirelineExportService {
             throw new RuntimeException(e);
         }
 
-        Map<String, List<Translation>> translations = getMultilingualProperties(properties);
+        Map<String, List<Translation>> translations = getMultilingualProperties(node.properties);
         writeTranslationsFile(node, translations, exportDestination);
     }
 
@@ -142,8 +137,18 @@ public class WirelineExportService {
                 continue;
             }
             String propertyNameConverted = prefixedPropertyName.replace("sc:", "wln:");
-            String propertyValue = formatMetadata(propertyEntry.getValue()).replace("sc:", "wln:");
-            convertedProperties.put(propertyNameConverted, propertyValue);
+
+            String propertyValue = "";
+            try {
+                propertyValue = formatMetadata(propertyEntry.getValue()).replace("sc:", "wln:");
+            }
+            catch (NullPointerException e){
+                log.debug("Got null value for property " + prefixedPropertyName);
+            }
+
+            if (!StringUtils.isBlank(propertyValue)) {
+                convertedProperties.put(propertyNameConverted, propertyValue);
+            }
         }
         return convertedProperties;
     }
@@ -169,22 +174,24 @@ public class WirelineExportService {
     private String formatMetadata(Serializable obj) {
         String returnValue = "";
 
-        if (obj instanceof Date) {
-            SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss.SSSZ");
-            Date date = (Date) obj;
-            returnValue = format.format(date);
-            returnValue = returnValue.substring(0, 26) + ":" + returnValue.substring(26);
-        }
-        else if (obj instanceof MLText){
-            MLText mlText = (MLText)obj;
-            returnValue = mlText.getClosestValue(Locale.forLanguageTag("de"));
-        }
-        else if (obj instanceof ContentData) {
-            ContentData contentData = (ContentData)obj;
-            returnValue = contentData.toString();
-        }
-        else {
-            returnValue = obj.toString();
+        if (obj != null){
+            if (obj instanceof Date) {
+                SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss.SSSZ");
+                Date date = (Date) obj;
+                returnValue = format.format(date);
+                returnValue = returnValue.substring(0, 26) + ":" + returnValue.substring(26);
+            }
+            else if (obj instanceof MLText){
+                MLText mlText = (MLText)obj;
+                returnValue = mlText.getClosestValue(Locale.forLanguageTag("de"));
+            }
+            else if (obj instanceof ContentData) {
+                ContentData contentData = (ContentData)obj;
+                returnValue = contentData.toString();
+            }
+            else {
+                returnValue = obj.toString();
+            }
         }
 
         return returnValue;

@@ -4,12 +4,14 @@ import com.andreikubar.alfresco.migration.export.ExportNode;
 import com.andreikubar.alfresco.migration.export.ExportNodeBuilder;
 import com.andreikubar.alfresco.migration.export.wireline.WirelineExportService;
 import org.alfresco.model.ContentModel;
+import org.alfresco.repo.content.ContentStore;
 import org.alfresco.repo.security.authentication.AuthenticationUtil;
 import org.alfresco.service.ServiceRegistry;
 import org.alfresco.service.cmr.repository.*;
 import org.alfresco.service.namespace.NamespaceService;
 import org.alfresco.service.namespace.QName;
 import org.alfresco.service.namespace.RegexQNamePattern;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -36,13 +38,16 @@ public class TreeDumpEngine {
     private Boolean exportMetadata;
     private String exportDestination;
     private Boolean useCmName;
+    private int foldersProBatch;
 
     private ExportNodeBuilder exportNodeBuilder;
     private NodeService nodeService;
     private NamespaceService namespaceService;
+    private ContentStore defaultContentStore;
     private WirelineExportService wirelineExportService;
     private TreeDumperTask dumpTreeTask;
     private Map<String, BufferedWriter> threadWriters;
+    private Path datedExportFolder;
 
     private ForkJoinPool forkJoinPool;
 
@@ -60,6 +65,10 @@ public class TreeDumpEngine {
         this.wirelineExportService = wirelineExportService;
     }
 
+    public void setDefaultContentStore(ContentStore defaultContentStore) {
+        this.defaultContentStore = defaultContentStore;
+    }
+
     private void loadPropeties() {
         Properties properties = new Properties();
         InputStream input = null;
@@ -73,13 +82,16 @@ public class TreeDumpEngine {
             if (StringUtils.isBlank(this.rootNodeListInput = properties.getProperty("rootNodeListInput"))) {
                 throw new IllegalArgumentException("parameter rootNodeListInput is missing");
             }
-            if (StringUtils.isBlank(this.contentStoreBase = properties.getProperty("contentStoreBase"))) {
-                throw new IllegalArgumentException("parameter contentStoreBase is missing");
-            }
 
             this.exportMetadata = Boolean.valueOf(properties.getProperty("exportMetadata"));
             if (this.exportMetadata && StringUtils.isBlank(this.exportDestination = properties.getProperty("exportDestination"))) {
                 throw new IllegalArgumentException("parameter exportDestination is missing");
+            }
+
+            try {
+                this.foldersProBatch = Integer.parseInt(properties.getProperty("foldersProBatch"));
+            } catch (NumberFormatException e) {
+                this.foldersProBatch = 5;
             }
 
             this.checkPhysicalExistence = Boolean.valueOf(properties.getProperty("checkPhysicalExistence"));
@@ -100,7 +112,12 @@ public class TreeDumpEngine {
 
     void startAndWait() {
         loadPropeties();
+        cleanCsvOutputDir();
+        this.contentStoreBase = defaultContentStore.getRootLocation();
         this.exportNodeBuilder.setUseCmName(this.useCmName);
+        if (this.exportMetadata) {
+            this.exportNodeBuilder.setReadProperties(true);
+        }
 
         AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
 
@@ -138,13 +155,21 @@ public class TreeDumpEngine {
         String startDateTime = sdf.format(cal.getTime());
         long startTime = System.currentTimeMillis();
 
+        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd-HHmm");
+        Date date = new Date();
+        String datedSubfolderName = format.format(date);
+        this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
+
         log.info(String.format("TreeDump starting - %s", startDateTime));
-        log.info(String.format("Check existence on disk: %s", checkPhysicalExistence));
-        log.info(String.format("     Content store base: %s", contentStoreBase));
-        log.info(String.format("          Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
-        log.info(String.format("   Root nodes read from: %s", rootNodeListInput));
-        log.info(String.format("     Results written to: %s", csvOutputDir));
-        log.info(String.format("     Metadata export is: %s", exportMetadata ? "ON" : "OFF"));
+        log.info(String.format("    Check existence on disk: %s", checkPhysicalExistence));
+        log.info(String.format("         Content store base: %s", contentStoreBase));
+        log.info(String.format("              Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
+        log.info(String.format("       Root nodes read from: %s", rootNodeListInput));
+        log.info(String.format("         Results written to: %s", csvOutputDir));
+        log.info(String.format("         Metadata export is: %s", exportMetadata ? "ON" : "OFF"));
+        if (exportMetadata)
+            log.info(String.format("Metadata export destination: %s", datedExportFolder.toString()));
+
         dumpTreeTask = new TreeDumperTask(startNodes, 0);
         forkJoinPool.execute(dumpTreeTask);
         do {
@@ -180,6 +205,14 @@ public class TreeDumpEngine {
         log.info("TreeDump shutdown");
     }
 
+    private void cleanCsvOutputDir() {
+        try {
+            FileUtils.cleanDirectory(Paths.get(csvOutputDir).toFile());
+        } catch (IOException e) {
+            log.warn("Failed to clean the csv output directory");
+        }
+    }
+
 
     private class TreeDumperTask extends RecursiveAction {
         private List<ExportNode> parentNodes;
@@ -211,8 +244,8 @@ public class TreeDumpEngine {
             try {
                 for (ExportNode parentNode : parentNodes) {
                     processChildNodesDumpingToCsv(parentNode);
-                    processSubFoldersRecursively();
                 }
+                processSubFoldersRecursively();
             } catch (Exception e) {
                 log.error("Error by processing child-nodes", e);
             }
@@ -220,14 +253,26 @@ public class TreeDumpEngine {
 
         private void processSubFoldersRecursively() {
             if (subFolders.size() > 0) {
-                if (subFolders.size() >= 2) {
-                    TreeDumperTask otherTask = new TreeDumperTask(subFolders.subList(0,
-                            (int) Math.floor(subFolders.size() / 2)), recursionLevel + 1);
-                    otherTask.fork();
-                    (new TreeDumperTask(subFolders.subList(
-                            (int) Math.ceil(subFolders.size() / 2), subFolders.size()), recursionLevel + 1))
-                            .compute();
-                    otherTask.join();
+                int batch_size = foldersProBatch;
+                if (subFolders.size() >= batch_size) {
+                    int number_of_batches = (int) Math.floor(subFolders.size() / batch_size);
+                    List<RecursiveAction> actionsToFork = new ArrayList<>(number_of_batches);
+                    int lower_bound;
+                    int upper_bound = 0;
+                    int batch_index;
+                    for (batch_index = 0; batch_index < number_of_batches; batch_index++) {
+                        lower_bound = batch_index * batch_size;
+                        upper_bound = (batch_index + 1) * batch_size;
+                        actionsToFork.add(
+                                new TreeDumperTask(subFolders.subList(lower_bound, upper_bound), recursionLevel + 1)
+                        );
+                    }
+                    if (subFolders.size() > upper_bound) { // pack the rests into one last Task
+                        actionsToFork.add(
+                                new TreeDumperTask(subFolders.subList(upper_bound, subFolders.size()), recursionLevel + 1)
+                        );
+                    }
+                    invokeAll(actionsToFork); // fork all tasks and wait for completion
                 } else {
                     (new TreeDumperTask(subFolders, recursionLevel + 1)).compute();
                 }
@@ -239,82 +284,91 @@ public class TreeDumpEngine {
         private void processChildNodesDumpingToCsv(ExportNode parentNode) throws IOException {
             List<ChildAssociationRef> childAssocs =
                     nodeService.getChildAssocs(parentNode.nodeRef, ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL);
-            if (childAssocs.size() > 0) {
-                try {
-                    for (ChildAssociationRef assoc : childAssocs) {
-                        ExportNode childNode = exportNodeBuilder.constructExportNode(assoc, parentNode.fullPath);
-                        if (childNode.isFolder) {
-                            subFolders.add(childNode);
-                        }
-                        if (exportMetadata) {
-                            exportMetadataToFileStructure(childNode);
-                        }
-                        if (checkExistenceForFilesAndOnlyIfRequested(childNode)) {
-                            writeCsvLine(
-                                    threadWriters.get(Thread.currentThread().getName()),
-                                    assoc.getParentRef().getId(),
-                                    assoc.getChildRef().getId(),
-                                    childNode.name, childNode.nodeType, recursionLevel,
-                                    childNode.isFolder, parentNode.fullPath);
-                        }
-                    }
-                } catch (FileNotFoundException e) {
-                    log.error("Failed to write output", e);
-                }
+            if (childAssocs.size() == 0) {
+                return;
             }
-        }
-
-        private boolean checkExistenceForFilesAndOnlyIfRequested(ExportNode exportNode) {
-            return !exportNode.isFile
-                    || (!checkPhysicalExistence || existsOnDisk(exportNode.nodeRef));
-        }
-
-        private boolean existsOnDisk(NodeRef childRef) {
-            ContentData contentData = (ContentData) nodeService.getProperty(childRef,
-                    QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "content"));
-            String contentURL = contentData.getContentUrl();
-            String contentLocationWithinStore = contentURL.replace("store://", "");
-            Path pathToCheck = Paths.get(contentStoreBase, contentLocationWithinStore);
-            boolean fileExists = Files.exists(pathToCheck);
-            if (!fileExists) log.warn(String.format("existence check FAILED for: %s", pathToCheck.toString()));
-            return fileExists;
-        }
-
-        private void writeCsvLine(BufferedWriter csvWriter, String parentId, String childId, String nodeName,
-                                  QName childNodeType, int level, boolean isFolder, String containingPath) throws IOException {
-            String csvLine = String.format("%d|%s|%s|%s|%s|%s|%s\n",
-                    level,
-                    parentId,
-                    childId,
-                    childNodeType.getPrefixedQName(namespaceService).getPrefixString(),
-                    isFolder ? "isFolder" : "notAFolder",
-                    containingPath,
-                    nodeName
-            );
-            csvWriter.append(csvLine);
-        }
-
-        private void exportMetadataToFileStructure(ExportNode node) {
-            SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd-hhmm");
-            Date date = new Date();
-            String datedSubfolderName = format.format(date);
-            createDirectory(node, datedSubfolderName);
-            wirelineExportService.writePropertyAndTranslationsFile(node, Paths.get(exportDestination).resolve(datedSubfolderName));
-            wirelineExportService.writeAclFile(node, Paths.get(exportDestination).resolve(datedSubfolderName));
-        }
-
-        private void createDirectory(ExportNode node, String datedSubfolderName) {
-            try {
-                Path pathToCreate = node.isFolder ? Paths.get(node.fullPath) : Paths.get(node.fullPath).getParent();
-                if (pathToCreate.getRoot() != null){
-                    pathToCreate = pathToCreate.subpath(0, pathToCreate.getNameCount());
+            for (ChildAssociationRef assoc : childAssocs) {
+                ExportNode childNode = exportNodeBuilder.constructExportNode(assoc, parentNode.fullPath);
+                if (childNode.isFolder) {
+                    subFolders.add(childNode);
                 }
-                Files.createDirectories(Paths.get(exportDestination).resolve(datedSubfolderName).resolve(pathToCreate));
-            } catch (IOException e) {
-                log.error(e);
-                throw new RuntimeException(e);
+                if (checkExistenceForFilesAndOnlyIfRequested(childNode)) {
+                    if (exportMetadata) {
+                        exportMetadataToFileStructure(childNode);
+                    }
+                    writeCsvLine(
+                            threadWriters.get(Thread.currentThread().getName()),
+                            assoc.getParentRef().getId(),
+                            assoc.getChildRef().getId(),
+                            childNode.name,
+                            childNode.nodeType,
+                            recursionLevel,
+                            childNode.isFolder,
+                            parentNode.fullPath,
+                            childNode.contentUrl,
+                            childNode.contentBytes);
+                }
             }
         }
 
     }
+
+    private boolean checkExistenceForFilesAndOnlyIfRequested(ExportNode exportNode) {
+        return !exportNode.isFile
+                || (!checkPhysicalExistence || existsOnDisk(exportNode.nodeRef));
+    }
+
+    private boolean existsOnDisk(NodeRef childRef) {
+        ContentData contentData = (ContentData) nodeService.getProperty(childRef,
+                QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "content"));
+        String contentURL = contentData.getContentUrl();
+        String contentLocationWithinStore = contentURL.replace("store://", "");
+        Path pathToCheck = Paths.get(contentStoreBase, contentLocationWithinStore);
+        boolean fileExists = Files.exists(pathToCheck);
+        if (!fileExists) log.warn(String.format("existence check FAILED for: %s", pathToCheck.toString()));
+        return fileExists;
+    }
+
+    private void writeCsvLine(BufferedWriter csvWriter, String parentId, String childId, String nodeName,
+                              QName childNodeType, int level, boolean isFolder, String containingPath,
+                              String contentUrl, long contentBytes) throws IOException {
+        String csvLine = String.format("%d|%s|%s|%s|%s|%s|%s|%s|%d\n",
+                level,
+                parentId,
+                childId,
+                childNodeType.getPrefixedQName(namespaceService).getPrefixString(),
+                isFolder ? "isFolder" : "notAFolder",
+                containingPath,
+                nodeName,
+                contentUrl,
+                contentBytes
+        );
+        csvWriter.append(csvLine);
+    }
+
+    private void exportMetadataToFileStructure(ExportNode node) {
+        createDirectory(node);
+        try {
+            wirelineExportService.writePropertyAndTranslationsFile(node, datedExportFolder);
+            wirelineExportService.writeAclFile(node, datedExportFolder);
+        } catch (Exception e) {
+            log.error("Error by processing node " + node.fullPath);
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void createDirectory(ExportNode node) {
+        try {
+            Path pathToCreate = node.isFolder ? Paths.get(node.fullPath) : Paths.get(node.fullPath).getParent();
+            if (pathToCreate.getRoot() != null) {
+                pathToCreate = pathToCreate.subpath(0, pathToCreate.getNameCount());
+            }
+            Files.createDirectories(datedExportFolder.resolve(pathToCreate));
+        } catch (IOException e) {
+            log.error(e);
+            throw new RuntimeException(e);
+        }
+    }
+
 }
+

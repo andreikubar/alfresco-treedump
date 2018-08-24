@@ -8,6 +8,7 @@
             <value>C:/tmp/alfrescoExport/treedump.properties</value>
         </property>
         <property name="wirelineExportService" ref="wirelineExportService"/>
+        <property name="defaultContentStore" ref="fileContentStore"/>
     </bean>
 
     <bean id="exportNodeBuilder" class="com.andreikubar.alfresco.migration.export.ExportNodeBuilder">
