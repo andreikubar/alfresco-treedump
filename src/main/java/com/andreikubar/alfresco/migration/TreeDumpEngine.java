@@ -241,13 +241,18 @@ public class TreeDumpEngine {
             }
 
             AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
-            try {
-                for (ExportNode parentNode : parentNodes) {
+
+            for (ExportNode parentNode : parentNodes) {
+                try {
                     processChildNodesDumpingToCsv(parentNode);
+                } catch (Exception e) {
+                    log.error("Failed to process children of " + parentNode.fullPath);
                 }
+            }
+            try {
                 processSubFoldersRecursively();
             } catch (Exception e) {
-                log.error("Error by processing child-nodes", e);
+                log.error("Failed to process recursive tasks for subfolders " + subFolders.toArray());
             }
         }
 
@@ -281,32 +286,36 @@ public class TreeDumpEngine {
 
         }
 
-        private void processChildNodesDumpingToCsv(ExportNode parentNode) throws IOException {
+        private void processChildNodesDumpingToCsv(ExportNode parentNode) {
             List<ChildAssociationRef> childAssocs =
                     nodeService.getChildAssocs(parentNode.nodeRef, ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL);
             if (childAssocs.size() == 0) {
                 return;
             }
             for (ChildAssociationRef assoc : childAssocs) {
-                ExportNode childNode = exportNodeBuilder.constructExportNode(assoc, parentNode.fullPath);
-                if (childNode.isFolder) {
-                    subFolders.add(childNode);
-                }
-                if (checkExistenceForFilesAndOnlyIfRequested(childNode)) {
-                    if (exportMetadata) {
-                        exportMetadataToFileStructure(childNode);
+                try {
+                    ExportNode childNode = exportNodeBuilder.constructExportNode(assoc, parentNode.fullPath);
+                    if (childNode.isFolder) {
+                        subFolders.add(childNode);
                     }
-                    writeCsvLine(
-                            threadWriters.get(Thread.currentThread().getName()),
-                            assoc.getParentRef().getId(),
-                            assoc.getChildRef().getId(),
-                            childNode.name,
-                            childNode.nodeType,
-                            recursionLevel,
-                            childNode.isFolder,
-                            parentNode.fullPath,
-                            childNode.contentUrl,
-                            childNode.contentBytes);
+                    if (checkExistenceForFilesAndOnlyIfRequested(childNode)) {
+                        if (exportMetadata) {
+                            exportMetadataToFileStructure(childNode);
+                        }
+                        writeCsvLine(
+                                threadWriters.get(Thread.currentThread().getName()),
+                                assoc.getParentRef().getId(),
+                                assoc.getChildRef().getId(),
+                                childNode.name,
+                                childNode.nodeType,
+                                recursionLevel,
+                                childNode.isFolder,
+                                parentNode.fullPath,
+                                childNode.contentUrl,
+                                childNode.contentBytes);
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to process child " + assoc.getQName().toPrefixString(namespaceService), e);
                 }
             }
         }
