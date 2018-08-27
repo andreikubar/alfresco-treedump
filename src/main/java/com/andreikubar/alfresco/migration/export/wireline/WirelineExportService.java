@@ -16,6 +16,7 @@ import org.apache.commons.logging.LogFactory;
 
 import java.io.*;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
@@ -68,9 +69,7 @@ public class WirelineExportService {
         String xmlContent = FileBuilder.buildMetadataFileContent(convertedNodeType, convertedAspects,
                 convertedProperties);
 
-        Path metadataFile = exportDestination.resolve(
-                (getRelativeNodePath(node)) + ".metadata.properties.xml"
-        );
+        Path metadataFile = constructMetadataPath(node, exportDestination, ".metadata.properties.xml");
         try (BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(
                 new FileOutputStream(metadataFile.toFile()), "UTF8"))) {
             bw.write(xmlContent);
@@ -83,11 +82,11 @@ public class WirelineExportService {
         writeTranslationsFile(node, translations, exportDestination);
     }
 
-    public void writeAclFile(ExportNode node, Path exportDestination){
+    public void writeAclFile(ExportNode node, Path exportDestination) {
         Set<AccessPermission> accessPermissions = permissionService.getAllSetPermissions(node.nodeRef);
         boolean inherited = permissionService.getInheritParentPermissions(node.nodeRef);
         String xmlContent = FileBuilder.buildAclFileContent(accessPermissions, inherited);
-        Path aclFile = exportDestination.resolve(getRelativeNodePath(node) + ".acl");
+        Path aclFile = constructMetadataPath(node, exportDestination, ".acl");
         try (BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(
                 new FileOutputStream(aclFile.toFile()), "UTF8"))) {
             bw.write(xmlContent);
@@ -97,9 +96,9 @@ public class WirelineExportService {
         }
     }
 
-    public void writeTranslationsFile(ExportNode node, Map<String, List<Translation>> translations, Path exportDestination){
+    public void writeTranslationsFile(ExportNode node, Map<String, List<Translation>> translations, Path exportDestination) {
         String xmlContent = FileBuilder.buildTranslationFileContent(translations);
-        Path translationsFile = exportDestination.resolve(getRelativeNodePath(node) + ".locale.json");
+        Path translationsFile = constructMetadataPath(node, exportDestination, ".locale.json");
         try (BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(
                 new FileOutputStream(translationsFile.toFile()), "UTF8"))) {
             bw.write(xmlContent);
@@ -107,6 +106,17 @@ public class WirelineExportService {
             log.error("Failed to write translations file " + translationsFile.toString());
             throw new RuntimeException(e);
         }
+    }
+
+    private Path constructMetadataPath(ExportNode node, Path exportDestination, String suffix) {
+        Path metadataPath = exportDestination.resolve(
+                (getRelativeNodePath(node)) + suffix
+        );
+        if (metadataPath.toAbsolutePath().toString().getBytes().length > 260) {
+            String nodePathShort = getNodePathNodeRefBased(node);
+            metadataPath = exportDestination.resolve(nodePathShort + suffix);
+        }
+        return metadataPath;
     }
 
     public Map<String, List<Translation>> getMultilingualProperties(Map<QName, Serializable> props) {
@@ -141,8 +151,7 @@ public class WirelineExportService {
             String propertyValue = "";
             try {
                 propertyValue = formatMetadata(propertyEntry.getValue()).replace("sc:", "wln:");
-            }
-            catch (NullPointerException e){
+            } catch (NullPointerException e) {
                 log.debug("Got null value for property " + prefixedPropertyName);
             }
 
@@ -174,22 +183,19 @@ public class WirelineExportService {
     private String formatMetadata(Serializable obj) {
         String returnValue = "";
 
-        if (obj != null){
+        if (obj != null) {
             if (obj instanceof Date) {
                 SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss.SSSZ");
                 Date date = (Date) obj;
                 returnValue = format.format(date);
                 returnValue = returnValue.substring(0, 26) + ":" + returnValue.substring(26);
-            }
-            else if (obj instanceof MLText){
-                MLText mlText = (MLText)obj;
+            } else if (obj instanceof MLText) {
+                MLText mlText = (MLText) obj;
                 returnValue = mlText.getClosestValue(Locale.forLanguageTag("de"));
-            }
-            else if (obj instanceof ContentData) {
-                ContentData contentData = (ContentData)obj;
+            } else if (obj instanceof ContentData) {
+                ContentData contentData = (ContentData) obj;
                 returnValue = contentData.toString();
-            }
-            else {
+            } else {
                 returnValue = obj.toString();
             }
         }
@@ -199,5 +205,11 @@ public class WirelineExportService {
 
     private String getRelativeNodePath(ExportNode node) {
         return node.fullPath.startsWith("/") ? node.fullPath.substring(1) : node.fullPath;
+    }
+
+    private String getNodePathNodeRefBased(ExportNode node) {
+        Path nodeFullPath = Paths.get(getRelativeNodePath(node));
+        String nodeFullPathWithNodeRefAsFileName = nodeFullPath.getParent().toString() + "/" + node.nodeRef.getId();
+        return nodeFullPathWithNodeRefAsFileName;
     }
 }

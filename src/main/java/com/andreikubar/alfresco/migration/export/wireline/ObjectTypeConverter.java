@@ -38,8 +38,7 @@ public class ObjectTypeConverter {
 
     public String getNewObjectType(String oldObjectType) {
         if (objectTypes.containsKey(oldObjectType)) {
-            String newType = objectTypes.get(oldObjectType);
-            return newType;
+            return objectTypes.get(oldObjectType);
         } else {
             if (!oldObjectType.startsWith("cm:")) {
                 LOG.warn("No matching object type found for: " + oldObjectType);

@@ -150,15 +150,16 @@ public class TreeDumpEngine {
         if (forkJoinPool == null) forkJoinPool = new ForkJoinPool();
         threadWriters = new HashMap<>();
 
-        Calendar cal = Calendar.getInstance();
-        SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
-        String startDateTime = sdf.format(cal.getTime());
-        long startTime = System.currentTimeMillis();
 
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd-HHmm");
         Date date = new Date();
         String datedSubfolderName = format.format(date);
         this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
+
+        Calendar cal = Calendar.getInstance();
+        SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
+        String startDateTime = sdf.format(cal.getTime());
+        long startTime = System.currentTimeMillis();
 
         log.info(String.format("TreeDump starting - %s", startDateTime));
         log.info(String.format("    Check existence on disk: %s", checkPhysicalExistence));
@@ -246,13 +247,13 @@ public class TreeDumpEngine {
                 try {
                     processChildNodesDumpingToCsv(parentNode);
                 } catch (Exception e) {
-                    log.error("Failed to process children of " + parentNode.fullPath);
+                    log.error("Failed to process children of " + parentNode.fullPath, e);
                 }
             }
             try {
                 processSubFoldersRecursively();
             } catch (Exception e) {
-                log.error("Failed to process recursive tasks for subfolders " + subFolders.toArray());
+                log.error("Failed to process recursive tasks for subfolders", e);
             }
         }
 
