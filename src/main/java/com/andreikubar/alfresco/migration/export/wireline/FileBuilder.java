@@ -1,6 +1,7 @@
 package com.andreikubar.alfresco.migration.export.wireline;
 
 import org.alfresco.service.cmr.security.AccessPermission;
+import org.json.simple.JSONObject;
 
 import java.util.Collection;
 import java.util.Iterator;
@@ -58,7 +59,9 @@ public final class FileBuilder {
             while (iter.hasNext()) {
                 Translation translation = iter.next();
                 builder.append(String.format("\t\t{\"locale\": \"%s\",\n", translation.getLocale()));
-                builder.append(String.format("\t\t\"translation\": \"%s\"}", translation.getTranslation()));
+                builder.append(String.format("\t\t\"translation\": \"%s\"}",
+                        JSONObject.escape(translation.getTranslation()))
+                );
                 if (!iter.hasNext()) {
                     builder.append("\n");
                 } else {

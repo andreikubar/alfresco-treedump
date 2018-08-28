@@ -112,7 +112,7 @@ public class TreeDumpEngine {
 
     void startAndWait() {
         loadPropeties();
-        cleanCsvOutputDir();
+        createOrCleanCsvOutDir();
         this.contentStoreBase = defaultContentStore.getRootLocation();
         this.exportNodeBuilder.setUseCmName(this.useCmName);
         if (this.exportMetadata) {
@@ -140,21 +140,15 @@ public class TreeDumpEngine {
             return;
         }
 
-        Path csvOutPath = Paths.get(csvOutputDir);
-        try {
-            Files.createDirectories(csvOutPath);
-        } catch (IOException e) {
-            log.error("Failed to create output directory", e);
-        }
-
         if (forkJoinPool == null) forkJoinPool = new ForkJoinPool();
         threadWriters = new HashMap<>();
 
-
-        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd-HHmm");
-        Date date = new Date();
-        String datedSubfolderName = format.format(date);
-        this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
+        if (exportMetadata) {
+            SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd-HHmm");
+            Date date = new Date();
+            String datedSubfolderName = format.format(date);
+            this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
+        }
 
         Calendar cal = Calendar.getInstance();
         SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
@@ -206,11 +200,21 @@ public class TreeDumpEngine {
         log.info("TreeDump shutdown");
     }
 
-    private void cleanCsvOutputDir() {
-        try {
-            FileUtils.cleanDirectory(Paths.get(csvOutputDir).toFile());
-        } catch (IOException e) {
-            log.warn("Failed to clean the csv output directory");
+    private void createOrCleanCsvOutDir() {
+        Path csvOutPath = Paths.get(csvOutputDir);
+        if (!Files.exists(csvOutPath)) {
+            try {
+                Files.createDirectories(csvOutPath);
+            } catch (IOException e) {
+                log.error("Failed to create output directory", e);
+            }
+        }
+        else {
+            try {
+                FileUtils.cleanDirectory(Paths.get(csvOutputDir).toFile());
+            } catch (IOException e) {
+                log.warn("Failed to clean the csv output directory");
+            }
         }
     }
 

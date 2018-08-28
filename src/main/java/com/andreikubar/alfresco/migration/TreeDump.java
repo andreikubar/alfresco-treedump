@@ -1,5 +1,7 @@
 package com.andreikubar.alfresco.migration;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.extensions.webscripts.Cache;
 import org.springframework.extensions.webscripts.DeclarativeWebScript;
 import org.springframework.extensions.webscripts.Status;
@@ -12,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 public class TreeDump extends DeclarativeWebScript {
+    private Log log = LogFactory.getLog(TreeDump.class);
 
     private TreeDumpEngine treeDumpEngine;
     private ExecutorService executorService;
@@ -31,7 +34,12 @@ public class TreeDump extends DeclarativeWebScript {
             treeDumpTask = executorService.submit(new Runnable() {
                 @Override
                 public void run() {
-                    treeDumpEngine.startAndWait();
+                    try {
+                        treeDumpEngine.startAndWait();
+                    }
+                    catch (Exception e){
+                        log.error(e);
+                    }
                 }
             });
             model.put("result", "started");
