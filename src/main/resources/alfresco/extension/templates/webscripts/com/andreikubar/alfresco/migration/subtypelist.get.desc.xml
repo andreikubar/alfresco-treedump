@@ -1,0 +1,7 @@
+<webscript>
+    <shortname>Tree Dump Utility - Subtype lister</shortname>
+    <description>Lists all sybtypes of a given type</description>
+    <url>/treedump/listsubtype/{parent_type}</url>
+    <authentication>none</authentication>
+    <format default="html">extension</format>
+</webscript>

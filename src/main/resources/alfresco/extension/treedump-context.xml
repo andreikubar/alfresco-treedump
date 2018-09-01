@@ -31,4 +31,10 @@
           class="com.andreikubar.alfresco.migration.TreeDumpShutdown" parent="webscript">
         <constructor-arg ref="treeDumpEngine"/>
     </bean>
+
+    <bean id="webscript.com.andreikubar.alfresco.migration.subtypelist.get"
+          class="com.andreikubar.alfresco.migration.SubtypeListerWebscript">
+        <constructor-arg ref="ServiceRegistry"/>
+    </bean>
+
 </beans>
