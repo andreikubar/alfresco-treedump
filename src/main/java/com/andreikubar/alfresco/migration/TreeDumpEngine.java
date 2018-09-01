@@ -110,7 +110,7 @@ public class TreeDumpEngine {
         this.exportNodeBuilder = exportNodeBuilder;
     }
 
-    void startAndWait() {
+    public void startAndWait() {
         loadPropeties();
         createOrCleanCsvOutDir();
         this.contentStoreBase = defaultContentStore.getRootLocation();
@@ -194,7 +194,7 @@ public class TreeDumpEngine {
         log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - startTime) / 1000));
     }
 
-    void shutdown() {
+    public void shutdown() {
         this.dumpTreeTask.cancel(true);
         this.forkJoinPool.shutdownNow();
         log.info("TreeDump shutdown");

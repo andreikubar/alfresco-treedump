@@ -1,0 +1,7 @@
+<webscript>
+    <shortname>Level-wise export</shortname>
+    <description></description>
+    <url>/treedump/export/levelwise</url>
+    <authentication>none</authentication>
+    <format default="html">extension</format>
+</webscript>

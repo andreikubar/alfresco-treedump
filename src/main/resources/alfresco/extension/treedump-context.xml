@@ -12,7 +12,7 @@
     </bean>
 
     <bean id="exportNodeBuilder" class="com.andreikubar.alfresco.migration.export.ExportNodeBuilder">
-        <property name="serviceRegistry" ref="ServiceRegistry"/>
+        <constructor-arg ref="ServiceRegistry"/>
         <property name="useCmName">
             <value>true</value>
         </property>
@@ -22,19 +22,33 @@
         <constructor-arg ref="ServiceRegistry"/>
     </bean>
 
+    <bean id="exportEngine" class="com.andreikubar.alfresco.migration.ExportEngine">
+        <constructor-arg index="0" ref="ServiceRegistry"/>
+        <constructor-arg index="1" ref="fileContentStore"/>
+        <property name="exportNodeBuilder" ref="exportNodeBuilder"/>
+        <property name="propertyFile">
+            <value>C:/tmp/export-levelwise/treedump.properties</value>
+        </property>
+    </bean>
+
     <bean id="webscript.com.andreikubar.alfresco.migration.treedump.get"
-          class="com.andreikubar.alfresco.migration.TreeDump" parent="webscript">
+          class="com.andreikubar.alfresco.migration.webscript.TreeDumpWebscript" parent="webscript">
         <constructor-arg ref="treeDumpEngine"/>
     </bean>
 
     <bean id="webscript.com.andreikubar.alfresco.migration.treedump-shutdown.get"
-          class="com.andreikubar.alfresco.migration.TreeDumpShutdown" parent="webscript">
+          class="com.andreikubar.alfresco.migration.webscript.TreeDumpShutdown" parent="webscript">
         <constructor-arg ref="treeDumpEngine"/>
     </bean>
 
     <bean id="webscript.com.andreikubar.alfresco.migration.subtypelist.get"
-          class="com.andreikubar.alfresco.migration.SubtypeListerWebscript">
+          class="com.andreikubar.alfresco.migration.webscript.SubtypeListerWebscript" parent="webscript">
         <constructor-arg ref="ServiceRegistry"/>
+    </bean>
+
+    <bean id="webscript.com.andreikubar.alfresco.migration.export-levelwise.get"
+          class="com.andreikubar.alfresco.migration.webscript.ExportLevelwiseWebscript" parent="webscript" >
+        <constructor-arg ref="exportEngine"/>
     </bean>
 
 </beans>

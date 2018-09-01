@@ -1,5 +1,6 @@
-package com.andreikubar.alfresco.migration;
+package com.andreikubar.alfresco.migration.webscript;
 
+import com.andreikubar.alfresco.migration.ExportEngine;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.extensions.webscripts.Cache;
@@ -13,32 +14,32 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-public class TreeDump extends DeclarativeWebScript {
-    private Log log = LogFactory.getLog(TreeDump.class);
-
-    private TreeDumpEngine treeDumpEngine;
+public class ExportLevelwiseWebscript extends DeclarativeWebScript {
+    private Log log = LogFactory.getLog(ExportLevelwiseWebscript.class);
     private ExecutorService executorService;
-    private Future<?> treeDumpTask;
+    private Future<?> exportTask;
+    private ExportEngine exportEngine;
 
-    public TreeDump(TreeDumpEngine treeDumpEngine) {
-        this.treeDumpEngine = treeDumpEngine;
+    public ExportLevelwiseWebscript(ExportEngine exportEngine) {
+        this.exportEngine = exportEngine;
     }
 
     @Override
     protected Map<String, Object> executeImpl(WebScriptRequest req, Status status, Cache cache) {
         Map<String, Object> model = new HashMap<>();
+
         if (executorService == null) {
             executorService = Executors.newSingleThreadExecutor();
         }
-        if (treeDumpTask == null || treeDumpTask.isDone()) {
-            treeDumpTask = executorService.submit(new Runnable() {
+        if (exportTask == null || exportTask.isDone()) {
+            exportTask = executorService.submit(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        treeDumpEngine.startAndWait();
+                        exportEngine.startLevelWiseExport();
                     }
                     catch (Exception e){
-                        log.error(e);
+                        log.error("Failed to export all levels", e);
                     }
                 }
             });
@@ -50,7 +51,4 @@ public class TreeDump extends DeclarativeWebScript {
 
         return model;
     }
-
-
-
 }

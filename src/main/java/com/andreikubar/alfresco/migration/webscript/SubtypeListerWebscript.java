@@ -1,4 +1,4 @@
-package com.andreikubar.alfresco.migration;
+package com.andreikubar.alfresco.migration.webscript;
 
 import org.alfresco.service.ServiceRegistry;
 import org.alfresco.service.cmr.dictionary.DictionaryService;

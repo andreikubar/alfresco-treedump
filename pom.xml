@@ -6,7 +6,7 @@
 
     <groupId>com.swisscom.alfresco</groupId>
     <artifactId>treedump</artifactId>
-    <version>1.3-SNAPSHOT</version>
+    <version>1.4-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <repositories>

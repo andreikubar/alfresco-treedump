@@ -12,6 +12,7 @@ public class ExportNode {
     public boolean isFolder;
     public boolean isFile;
     public QName nodeType;
+    public String nodeTypePrefixed;
     public String name;
     public Map<QName, Serializable> properties;
     public String contentUrl = "";

@@ -22,11 +22,16 @@ public class ExportNodeBuilder {
 
     private ServiceRegistry serviceRegistry;
     private NodeService nodeService;
+    private NamespaceService namespaceService;
+    DictionaryService dictionaryService;
     private Boolean useCmName;
     private Boolean readProperties = false;
 
-    public void setServiceRegistry(ServiceRegistry serviceRegistry) {
+    public ExportNodeBuilder(ServiceRegistry serviceRegistry) {
         this.serviceRegistry = serviceRegistry;
+        this.nodeService = serviceRegistry.getNodeService();
+        this.namespaceService = serviceRegistry.getNamespaceService();
+        this.dictionaryService = serviceRegistry.getDictionaryService();
     }
 
     public void setUseCmName(Boolean useCmName) {
@@ -42,14 +47,12 @@ public class ExportNodeBuilder {
     }
 
     public ExportNode constructExportNode(ChildAssociationRef childAssociationRef, String parentFullPath){
-        nodeService = serviceRegistry.getNodeService();
-        DictionaryService dictionaryService = serviceRegistry.getDictionaryService();
-
         if (useCmName == null) useCmName = true;
 
         ExportNode node = new ExportNode();
         node.nodeRef = childAssociationRef.getChildRef();
         node.nodeType = nodeService.getType(childAssociationRef.getChildRef());
+        node.nodeTypePrefixed = node.nodeType.toPrefixString(namespaceService);
         node.isFolder = dictionaryService.isSubClass(node.nodeType, FOLDER_TYPE);
         node.isFile = dictionaryService.isSubClass(node.nodeType, FILE_TYPE);
 
