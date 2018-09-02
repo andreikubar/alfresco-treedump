@@ -361,7 +361,7 @@ public class TreeDumpEngine {
     }
 
     private void exportMetadataToFileStructure(ExportNode node) {
-        createDirectory(node);
+        wirelineExportService.createDirectory(node, datedExportFolder);
         try {
             wirelineExportService.writePropertyAndTranslationsFile(node, datedExportFolder);
             wirelineExportService.writeAclFile(node, datedExportFolder);
@@ -371,18 +371,7 @@ public class TreeDumpEngine {
         }
     }
 
-    private void createDirectory(ExportNode node) {
-        try {
-            Path pathToCreate = node.isFolder ? Paths.get(node.fullPath) : Paths.get(node.fullPath).getParent();
-            if (pathToCreate.getRoot() != null) {
-                pathToCreate = pathToCreate.subpath(0, pathToCreate.getNameCount());
-            }
-            Files.createDirectories(datedExportFolder.resolve(pathToCreate));
-        } catch (IOException e) {
-            log.error(e);
-            throw new RuntimeException(e);
-        }
-    }
+
 
 }
 

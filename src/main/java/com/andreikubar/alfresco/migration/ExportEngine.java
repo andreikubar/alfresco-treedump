@@ -18,6 +18,10 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -25,7 +29,6 @@ public class ExportEngine {
     public static final int N_THREADS = 4;
     public static final int BATCH_SIZE = 50;
     public static CsvOutput csvOutput;
-    public static Map<Integer, Map<String, BufferedWriter>> levelThreadWriters = new HashMap<>();
     private Log log = LogFactory.getLog(ExportEngine.class);
 
     private String rootNodeListInput;
@@ -40,7 +43,9 @@ public class ExportEngine {
     private ExportNodeBuilder exportNodeBuilder;
 
     private ExecutorService executorService;
-    CompletionService<Integer> completionService;
+    private CompletionService<Integer> completionService;
+    public Map<Integer, Map<String, BufferedWriter>> levelThreadWriters = new HashMap<>();
+    private Path datedExportFolder;
 
     public ExportEngine(ServiceRegistry serviceRegistry, ContentStore defaultContentStore) {
         this.defaultContentStore = defaultContentStore;
@@ -50,6 +55,10 @@ public class ExportEngine {
 
     public void setExportNodeBuilder(ExportNodeBuilder exportNodeBuilder) {
         this.exportNodeBuilder = exportNodeBuilder;
+    }
+
+    public void setWirelineExportService(WirelineExportService wirelineExportService) {
+        this.wirelineExportService = wirelineExportService;
     }
 
     public void setPropertyFile(String propertyFile) {
@@ -80,7 +89,7 @@ public class ExportEngine {
         }
     }
 
-    public void startLevelWiseExport(){
+    public void doLevelWiseExport(){
         AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
         loadPropeties();
         csvOutput = new CsvOutput(csvOutputDir);
@@ -89,6 +98,11 @@ public class ExportEngine {
             executorService = Executors.newFixedThreadPool(N_THREADS);
         }
         completionService = new ExecutorCompletionService<>(executorService);
+
+        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd-HHmm");
+        Date date = new Date();
+        String datedSubfolderName = format.format(date);
+        this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
 
         List<ExportNode> startNodes = getStartNodes();
         List<List<ExportNode>> levels = new ArrayList<>();
@@ -108,6 +122,9 @@ public class ExportEngine {
             int lastDispatched = 0;
             List<Future> exportTasks = new ArrayList<>();
             for (ExportNode parentNode : levels.get(level)) {
+                if (!parentNode.isFolder){
+                    continue;
+                }
                 List<ChildAssociationRef> childAssocs = nodeService.getChildAssocs(parentNode.nodeRef,
                         ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL);
                 if (childAssocs.size() > 0) {
@@ -169,6 +186,7 @@ public class ExportEngine {
                 startNode.nodeRef = new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, line);
                 startNode.name = (String) nodeService.getProperty(startNode.nodeRef, ContentModel.PROP_NAME);
                 startNode.fullPath = "/" + startNode.name;
+                startNode.isFolder = true;
                 startNodes.add(startNode);
             }
         } catch (IOException e) {
@@ -177,5 +195,74 @@ public class ExportEngine {
             log.error("Failed constructing start nodes array", e);
         }
         return startNodes;
+    }
+
+    private class ExportTask implements Runnable {
+        private Log log = LogFactory.getLog(ExportTask.class);
+        private List<ExportNode> exportNodes;
+        private Integer level;
+        private BufferedWriter threadWriter;
+
+        public ExportTask(List<ExportNode> exportNodes, Integer level) {
+            this.exportNodes = exportNodes;
+            this.level = level;
+        }
+
+        @Override
+        public void run() {
+            initThreadWriter();
+            AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
+            for (ExportNode exportNode : exportNodes) {
+                exportMetadataToFileStructure(exportNode);
+                try {
+                    ExportEngine.csvOutput.writeCsvLine(
+                            threadWriter,
+                            level,
+                            "",
+                            exportNode.nodeRef.getId(),
+                            exportNode.nodeTypePrefixed,
+                            exportNode.isFolder,
+                            exportNode.fullPath,
+                            exportNode.name,
+                            exportNode.contentUrl,
+                            exportNode.contentBytes);
+                } catch (IOException e) {
+                    log.error("Failed to write CSV line for child " + exportNode.fullPath);
+                }
+            }
+        }
+
+        private void exportMetadataToFileStructure(ExportNode node) {
+            wirelineExportService.createDirectory(node, datedExportFolder);
+            try {
+                wirelineExportService.writePropertyAndTranslationsFile(node, datedExportFolder);
+                wirelineExportService.writeAclFile(node, datedExportFolder);
+            } catch (Exception e) {
+                log.error("Error by processing node " + node.fullPath);
+                throw new RuntimeException(e);
+            }
+        }
+
+        private void initThreadWriter() {
+            String threadName = Thread.currentThread().getName();
+            Map<String, BufferedWriter> threadWriters;
+            if (!levelThreadWriters.containsKey(level)){
+                levelThreadWriters.put(level, new HashMap<String, BufferedWriter>());
+            }
+            threadWriters = levelThreadWriters.get(level);
+            if (!threadWriters.containsKey(threadName)) {
+                try {
+                    Path csvOutFile = ExportEngine.csvOutput.csvFilePathForLevel(threadName, level);
+                    BufferedWriter csvWriter = new BufferedWriter(
+                            new OutputStreamWriter(
+                                    new FileOutputStream(csvOutFile.toFile(), true), StandardCharsets.UTF_8));
+                    threadWriters.put(threadName, csvWriter);
+                } catch (FileNotFoundException e) {
+                    log.error("Failed to open BufferedWriter", e);
+                    throw new RuntimeException(e);
+                }
+            }
+            this.threadWriter = threadWriters.get(threadName);
+        }
     }
 }

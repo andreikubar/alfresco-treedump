@@ -26,6 +26,7 @@
         <constructor-arg index="0" ref="ServiceRegistry"/>
         <constructor-arg index="1" ref="fileContentStore"/>
         <property name="exportNodeBuilder" ref="exportNodeBuilder"/>
+        <property name="wirelineExportService" ref="wirelineExportService"/>
         <property name="propertyFile">
             <value>C:/tmp/export-levelwise/treedump.properties</value>
         </property>

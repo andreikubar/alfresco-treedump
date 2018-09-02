@@ -15,6 +15,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.*;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
@@ -54,6 +55,19 @@ public class WirelineExportService {
         this.nodeService = serviceRegistry.getNodeService();
         this.namespaceService = serviceRegistry.getNamespaceService();
         this.permissionService = serviceRegistry.getPermissionService();
+    }
+
+    public void createDirectory(ExportNode node, Path datedExportFolder) {
+        try {
+            Path pathToCreate = node.isFolder ? Paths.get(node.fullPath) : Paths.get(node.fullPath).getParent();
+            if (pathToCreate.getRoot() != null) {
+                pathToCreate = pathToCreate.subpath(0, pathToCreate.getNameCount());
+            }
+            Files.createDirectories(datedExportFolder.resolve(pathToCreate));
+        } catch (IOException e) {
+            log.error(e);
+            throw new RuntimeException(e);
+        }
     }
 
     public void writePropertyAndTranslationsFile(ExportNode node, Path exportDestination) {

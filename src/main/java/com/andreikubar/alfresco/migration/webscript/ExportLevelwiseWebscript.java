@@ -36,7 +36,7 @@ public class ExportLevelwiseWebscript extends DeclarativeWebScript {
                 @Override
                 public void run() {
                     try {
-                        exportEngine.startLevelWiseExport();
+                        exportEngine.doLevelWiseExport();
                     }
                     catch (Exception e){
                         log.error("Failed to export all levels", e);
