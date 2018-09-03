@@ -1,0 +1,58 @@
+syntax = "proto2";
+
+package treedump;
+
+option java_package = "com.andreikubar.alfresco.migration.proto";
+option java_outer_classname = "ExportProtos";
+
+message AlfrescoNode {
+    required string name = 1;
+    optional string full_path = 2;
+    optional bool inherits_permissions = 3;
+    optional string type = 5;
+    optional ContentData content_data = 6;
+    repeated Property properties = 7;
+    repeated Aspect aspects = 8;
+    repeated Permission permissions = 9;
+    repeated TranslatedProperty translatedProperties = 10;
+
+    message Property {
+        required string name = 1;
+        required string value = 2;
+    }
+
+    message TranslatedProperty{
+        required string name = 1;
+        repeated Translation translations = 2;
+    }
+
+    message Aspect {
+        required string name = 1;
+    }
+
+    message Permission {
+        required string permission = 1;
+        required string access_status = 2;
+        required string authority = 3;
+        required bool is_inherited = 4;
+        optional string authority_type = 5;
+    }
+
+    message Translation {
+        required string locale = 1;
+        optional string translation = 2;
+    }
+
+    message ContentData {
+        required string contentUrl = 1;
+        optional string mimeType = 2;
+        optional int64 size = 3;
+        optional string encoding = 4;
+        optional string locale = 5;
+    }
+}
+
+message ExportBatch {
+    repeated AlfrescoNode nodes = 1;
+}
+

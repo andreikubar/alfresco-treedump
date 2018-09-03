@@ -2,6 +2,7 @@ package com.andreikubar.alfresco.migration;
 
 import com.andreikubar.alfresco.migration.export.ExportNode;
 import com.andreikubar.alfresco.migration.export.ExportNodeBuilder;
+import com.andreikubar.alfresco.migration.export.ProtoExportService;
 import com.andreikubar.alfresco.migration.export.wireline.WirelineExportService;
 import org.alfresco.model.ContentModel;
 import org.alfresco.repo.content.ContentStore;
@@ -19,6 +20,7 @@ import org.apache.commons.logging.LogFactory;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
@@ -26,7 +28,6 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class ExportEngine {
-    public static final int N_THREADS = 4;
     public static final int BATCH_SIZE = 50;
     public static CsvOutput csvOutput;
     private Log log = LogFactory.getLog(ExportEngine.class);
@@ -35,16 +36,19 @@ public class ExportEngine {
     private String propertyFile;
     private String exportDestination;
     private String csvOutputDir;
+    private int numberOfThreads;
 
     private NodeService nodeService;
     private NamespaceService namespaceService;
     private ContentStore defaultContentStore;
     private WirelineExportService wirelineExportService;
+    private ProtoExportService protoExportService;
     private ExportNodeBuilder exportNodeBuilder;
 
     private ExecutorService executorService;
     private CompletionService<Integer> completionService;
-    public Map<Integer, Map<String, BufferedWriter>> levelThreadWriters = new HashMap<>();
+    private Map<Integer, Map<String, BufferedWriter>> levelThreadWriters = new HashMap<>();
+    private Map<Integer, Map<String, BufferedOutputStream>> levelProtoStreams = new HashMap<>();
     private Path datedExportFolder;
 
     public ExportEngine(ServiceRegistry serviceRegistry, ContentStore defaultContentStore) {
@@ -59,6 +63,10 @@ public class ExportEngine {
 
     public void setWirelineExportService(WirelineExportService wirelineExportService) {
         this.wirelineExportService = wirelineExportService;
+    }
+
+    public void setProtoExportService(ProtoExportService protoExportService) {
+        this.protoExportService = protoExportService;
     }
 
     public void setPropertyFile(String propertyFile) {
@@ -81,6 +89,8 @@ public class ExportEngine {
             if (StringUtils.isBlank(this.exportDestination = properties.getProperty("exportDestination"))) {
                 throw new IllegalArgumentException("parameter exportDestination is missing");
             }
+            this.numberOfThreads = Integer.parseInt(properties.getProperty("numberOfThreads",
+                    String.valueOf(Runtime.getRuntime().availableProcessors())));
         } catch (FileNotFoundException e) {
             log.error("Property file not found " + this.propertyFile);
             throw new RuntimeException(e);
@@ -89,13 +99,14 @@ public class ExportEngine {
         }
     }
 
-    public void doLevelWiseExport(){
+    public void doLevelWiseExport() {
         AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
+        this.exportNodeBuilder.setReadProperties(true);
         loadPropeties();
         csvOutput = new CsvOutput(csvOutputDir);
         levelThreadWriters = new HashMap<>();
-        if (executorService == null || executorService.isShutdown()){
-            executorService = Executors.newFixedThreadPool(N_THREADS);
+        if (executorService == null || executorService.isShutdown()) {
+            executorService = Executors.newFixedThreadPool(numberOfThreads);
         }
         completionService = new ExecutorCompletionService<>(executorService);
 
@@ -110,11 +121,7 @@ public class ExportEngine {
 
         long startTime = System.currentTimeMillis();
         List<ExportNode> nextLevelNodes;
-        for (int level = 0;; level++){
-            if (levels.get(level).isEmpty()){
-                log.debug("No more levels to process, last level was: " + (level-1));
-                break;
-            }
+        for (int level = 0; ; level++) {
             log.info("Starting level " + level + " export");
             nextLevelNodes = new ArrayList<>();
             levels.add(nextLevelNodes);
@@ -122,7 +129,7 @@ public class ExportEngine {
             int lastDispatched = 0;
             List<Future> exportTasks = new ArrayList<>();
             for (ExportNode parentNode : levels.get(level)) {
-                if (!parentNode.isFolder){
+                if (!parentNode.isFolder) {
                     continue;
                 }
                 List<ChildAssociationRef> childAssocs = nodeService.getChildAssocs(parentNode.nodeRef,
@@ -131,7 +138,7 @@ public class ExportEngine {
                     for (ChildAssociationRef childAssoc : childAssocs) {
                         nextLevelNodes.add(exportNodeBuilder.constructExportNode(childAssoc, parentNode.fullPath));
                         nodeCounter++;
-                        if (nodeCounter - lastDispatched >= BATCH_SIZE){
+                        if (nodeCounter - lastDispatched >= BATCH_SIZE) {
                             exportTasks.add(
                                     dispatchCurrentBatch(
                                             new ArrayList<>(nextLevelNodes.subList(lastDispatched, nodeCounter)), level));
@@ -141,33 +148,66 @@ public class ExportEngine {
                     }
                 }
             }
-            if (nodeCounter > lastDispatched){
+            if (nodeCounter > lastDispatched) {
                 exportTasks.add(
                         dispatchCurrentBatch(nextLevelNodes.subList(lastDispatched, nodeCounter), level));
-                log.debug("Tasks submitted: " + exportTasks.size());
-            }
-            if (exportTasks.size() > 0){
-                for (int i = 1; i <= exportTasks.size(); i++){
-                    try {
-                        completionService.take().get();
-                        log.debug("Tasks completed: " + i + " out of " + exportTasks.size());
-                    } catch (ExecutionException| InterruptedException e) {
-                        log.error("Export processing was interrupted");
-                        throw new RuntimeException(e);
-                    }
-                }
-                for (Map.Entry<String, BufferedWriter> threadWriter : levelThreadWriters.get(level).entrySet()){
-                    try {
-                        threadWriter.getValue().close();
-                    } catch (IOException e) {
-                        log.error("Failed to close threadWriter " + threadWriter.getKey() + " level " + level);
-                    }
-                }
-                log.info("Level " + level + " export is finished");
+                log.info("Tasks submitted: " + exportTasks.size());
             }
 
+            waitForLevelToFinish(level, exportTasks);
+            levels.set(level, null); // try to save some memory
+            if (nextLevelNodes.isEmpty()) {
+                log.info("No more levels to process, last level was: " + level);
+                break;
+            }
         }
         log.info(String.format("Level-wise export finished, elapsed time %s seconds", (System.currentTimeMillis() - startTime) / 1000));
+    }
+
+    private void waitForLevelToFinish(int level, List<Future> exportTasks) {
+        if (exportTasks.size() > 0) {
+            for (int i = 1; i <= exportTasks.size(); i++) {
+                try {
+                    completionService.take().get();
+                    if (log.isDebugEnabled()) {
+                        log.debug("Tasks completed: " + i + " out of " + exportTasks.size());
+                    }
+                    else {
+                        if (i % 100 == 0){
+                            log.info("Tasks completed: " + i + " out of " + exportTasks.size() + " level " + level);
+                        }
+                    }
+                } catch (ExecutionException | InterruptedException e) {
+                    log.error("Export processing was interrupted");
+                    throw new RuntimeException(e);
+                }
+            }
+            closeCsvWriters(level);
+            closeProtoStreams(level);
+            log.info("Level " + level + " export is finished");
+        }
+    }
+
+    private void closeProtoStreams(int level) {
+        for (Map.Entry<String, BufferedOutputStream> protoStream : levelProtoStreams.get(level).entrySet()){
+            try {
+                protoStream.getValue().close();
+            } catch (IOException e){
+                log.error("Failed to close protoStream " + protoStream.getKey() + " for level " + level);
+            }
+        }
+        levelProtoStreams.get(level).clear();
+    }
+
+    private void closeCsvWriters(int level) {
+        for (Map.Entry<String, BufferedWriter> threadWriter : levelThreadWriters.get(level).entrySet()) {
+            try {
+                threadWriter.getValue().close();
+            } catch (IOException e) {
+                log.error("Failed to close threadWriter " + threadWriter.getKey() + " for level " + level);
+            }
+        }
+        levelThreadWriters.get(level).clear();
     }
 
     private Future<?> dispatchCurrentBatch(List<ExportNode> exportNodes, int level) {
@@ -176,7 +216,7 @@ public class ExportEngine {
     }
 
 
-    private List<ExportNode> getStartNodes(){
+    private List<ExportNode> getStartNodes() {
         List<ExportNode> startNodes = new ArrayList<>();
         try (BufferedReader bufferedReader =
                      new BufferedReader(new FileReader(rootNodeListInput))) {
@@ -202,6 +242,7 @@ public class ExportEngine {
         private List<ExportNode> exportNodes;
         private Integer level;
         private BufferedWriter threadWriter;
+        private BufferedOutputStream protoStream;
 
         public ExportTask(List<ExportNode> exportNodes, Integer level) {
             this.exportNodes = exportNodes;
@@ -211,9 +252,20 @@ public class ExportEngine {
         @Override
         public void run() {
             initThreadWriter();
+            try {
+                initProtoStream();
+            } catch (IOException e) {
+                log.error("Failed to initialize protobuf output stream", e);
+                throw new RuntimeException(e);
+            }
             AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
             for (ExportNode exportNode : exportNodes) {
-                exportMetadataToFileStructure(exportNode);
+                //exportMetadataToFileStructure(exportNode);
+                try {
+                    protoExportService.exportNodeToFile(exportNode, protoStream);
+                } catch (IOException e) {
+                    log.error("Failed to export node to protobuf " + exportNode.fullPath, e);
+                }
                 try {
                     ExportEngine.csvOutput.writeCsvLine(
                             threadWriter,
@@ -246,7 +298,7 @@ public class ExportEngine {
         private void initThreadWriter() {
             String threadName = Thread.currentThread().getName();
             Map<String, BufferedWriter> threadWriters;
-            if (!levelThreadWriters.containsKey(level)){
+            if (!levelThreadWriters.containsKey(level)) {
                 levelThreadWriters.put(level, new HashMap<String, BufferedWriter>());
             }
             threadWriters = levelThreadWriters.get(level);
@@ -263,6 +315,23 @@ public class ExportEngine {
                 }
             }
             this.threadWriter = threadWriters.get(threadName);
+        }
+
+        private void initProtoStream() throws IOException {
+            String threadName = Thread.currentThread().getName();
+            if (!levelProtoStreams.containsKey(level)) {
+                levelProtoStreams.put(level, new HashMap<String, BufferedOutputStream>());
+            }
+            Map<String, BufferedOutputStream> protoStreams = levelProtoStreams.get(level);
+            if (!protoStreams.containsKey(threadName)) {
+                Path protoOutputFile = datedExportFolder.resolve("protobuf").resolve(String.valueOf(level))
+                        .resolve(threadName + ".proto");
+                Files.createDirectories(protoOutputFile.getParent());
+                BufferedOutputStream protoStream = new BufferedOutputStream(
+                        new FileOutputStream(protoOutputFile.toFile()));
+                protoStreams.put(threadName, protoStream);
+            }
+            this.protoStream = protoStreams.get(threadName);
         }
     }
 }

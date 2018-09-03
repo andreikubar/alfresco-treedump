@@ -39,8 +39,9 @@ public final class FileBuilder {
         StringBuilder sb = new StringBuilder();
 
         for (AccessPermission permission : permissions) {
-            String tag = String.format(aceTag, permission.getAuthority(), convertPermission(permission.getPermission
-                    ()), permission.getPosition(), permission.getAccessStatus(), permission.isInherited());
+            String tag = String.format(aceTag, permission.getAuthority(),
+                    convertPermission(permission.getPermission()), permission.getPosition(),
+                    permission.getAccessStatus(), permission.isInherited());
             sb.append(tag);
             sb.append("\n");
         }

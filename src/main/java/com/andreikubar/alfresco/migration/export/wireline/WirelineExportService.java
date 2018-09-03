@@ -21,6 +21,10 @@ import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
+import static com.andreikubar.alfresco.migration.export.filter.ExportFilters.ignoredAspects;
+import static com.andreikubar.alfresco.migration.export.filter.ExportFilters.ignoredProperties;
+import static com.andreikubar.alfresco.migration.export.filter.ExportFilters.ignoredPropertyPrefixes;
+
 public class WirelineExportService {
     private Log log = LogFactory.getLog(WirelineExportService.class);
 
@@ -28,27 +32,6 @@ public class WirelineExportService {
     NodeService nodeService;
     NamespaceService namespaceService;
     PermissionService permissionService;
-
-    private Set<QName> ignoredProperties = new HashSet<>(
-            Arrays.asList(
-                    ContentModel.PROP_NODE_DBID,
-                    ContentModel.PROP_NODE_UUID,
-                    ContentModel.PROP_CATEGORIES,
-                    ContentModel.ASPECT_TAGGABLE,
-                    ContentModel.PROP_LOCK_TYPE,
-                    ContentModel.PROP_LOCK_OWNER
-            ));
-
-    private Set<String> ignoredPropertyPrefixes = new HashSet<>(Arrays.asList("app", "exif"));
-
-
-    private Set<QName> ignoredAspects = new HashSet<>(Arrays.asList(
-            ContentModel.ASPECT_TAGGABLE,
-            ContentModel.ASPECT_CHECKED_OUT,
-            ContentModel.ASPECT_LOCKABLE));
-
-    private Set<String> ignoredAspectPrefixes = new HashSet<>(Collections.singletonList("app"));
-
 
     public WirelineExportService(ServiceRegistry serviceRegistry) {
         this.serviceRegistry = serviceRegistry;

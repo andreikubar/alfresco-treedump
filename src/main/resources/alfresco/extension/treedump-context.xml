@@ -22,11 +22,16 @@
         <constructor-arg ref="ServiceRegistry"/>
     </bean>
 
+    <bean id="protoExportService" class="com.andreikubar.alfresco.migration.export.ProtoExportService">
+        <constructor-arg ref="ServiceRegistry"/>
+    </bean>
+
     <bean id="exportEngine" class="com.andreikubar.alfresco.migration.ExportEngine">
         <constructor-arg index="0" ref="ServiceRegistry"/>
         <constructor-arg index="1" ref="fileContentStore"/>
         <property name="exportNodeBuilder" ref="exportNodeBuilder"/>
         <property name="wirelineExportService" ref="wirelineExportService"/>
+        <property name="protoExportService" ref="protoExportService"/>
         <property name="propertyFile">
             <value>C:/tmp/export-levelwise/treedump.properties</value>
         </property>
