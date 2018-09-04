@@ -2,6 +2,7 @@ package com.andreikubar.alfresco.migration;
 
 import com.andreikubar.alfresco.migration.export.ExportNode;
 import com.andreikubar.alfresco.migration.export.ExportNodeBuilder;
+import com.andreikubar.alfresco.migration.export.NodeRefExt;
 import com.andreikubar.alfresco.migration.export.ProtoExportService;
 import com.andreikubar.alfresco.migration.export.wireline.WirelineExportService;
 import org.alfresco.model.ContentModel;
@@ -26,9 +27,11 @@ import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ExportEngine {
-    public static final int BATCH_SIZE = 50;
+    public static final String DEFAULT_BATCH_SIZE = "50";
+    public static final String DEFAULT_SCOUT_THREADS = "2";
     public static CsvOutput csvOutput;
     private Log log = LogFactory.getLog(ExportEngine.class);
 
@@ -36,7 +39,9 @@ public class ExportEngine {
     private String propertyFile;
     private String exportDestination;
     private String csvOutputDir;
-    private int numberOfThreads;
+    private int scoutThreads;
+    private int dumperThreads;
+    private int dumpBatchSize;
 
     private NodeService nodeService;
     private NamespaceService namespaceService;
@@ -45,14 +50,16 @@ public class ExportEngine {
     private ProtoExportService protoExportService;
     private ExportNodeBuilder exportNodeBuilder;
 
-    private ExecutorService executorService;
-    private CompletionService<Integer> completionService;
+    private ExecutorService dumperService;
+    private ExecutorService scoutService;
+    private CompletionService<Integer> dumperCompletionService;
+    private CompletionService<Integer> scoutCompletionService;
     private Map<Integer, Map<String, BufferedWriter>> levelThreadWriters = new HashMap<>();
     private Map<Integer, Map<String, BufferedOutputStream>> levelProtoStreams = new HashMap<>();
     private Path datedExportFolder;
 
-    private int tasksSubmitted;
-    private int tasksFinished;
+    private AtomicInteger tasksSubmitted;
+    private AtomicInteger tasksFinished;
     private int currentLevel;
 
     public ExportEngine(ServiceRegistry serviceRegistry, ContentStore defaultContentStore) {
@@ -93,8 +100,10 @@ public class ExportEngine {
             if (StringUtils.isBlank(this.exportDestination = properties.getProperty("exportDestination"))) {
                 throw new IllegalArgumentException("parameter exportDestination is missing");
             }
-            this.numberOfThreads = Integer.parseInt(properties.getProperty("numberOfThreads",
+            this.scoutThreads = Integer.parseInt(properties.getProperty("scoutThreads", DEFAULT_SCOUT_THREADS));
+            this.dumperThreads = Integer.parseInt(properties.getProperty("dumperThreads",
                     String.valueOf(Runtime.getRuntime().availableProcessors())));
+            this.dumpBatchSize = Integer.parseInt(properties.getProperty("dumpBatchSize", DEFAULT_BATCH_SIZE));
         } catch (FileNotFoundException e) {
             log.error("Property file not found " + this.propertyFile);
             throw new RuntimeException(e);
@@ -109,10 +118,14 @@ public class ExportEngine {
         loadPropeties();
         csvOutput = new CsvOutput(csvOutputDir);
         levelThreadWriters = new HashMap<>();
-        if (executorService == null || executorService.isShutdown()) {
-            executorService = Executors.newFixedThreadPool(numberOfThreads);
+        if (dumperService == null || dumperService.isShutdown()) {
+            dumperService = Executors.newFixedThreadPool(dumperThreads);
         }
-        completionService = new ExecutorCompletionService<>(executorService);
+        if (scoutService == null || scoutService.isShutdown()) {
+            scoutService = Executors.newFixedThreadPool(scoutThreads);
+        }
+        dumperCompletionService = new ExecutorCompletionService<>(dumperService);
+        scoutCompletionService = new ExecutorCompletionService<>(scoutService);
 
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd-HHmm");
         Date date = new Date();
@@ -127,12 +140,62 @@ public class ExportEngine {
         log.info(String.format("              Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
         log.info(String.format("       Root nodes read from: %s", rootNodeListInput));
         log.info(String.format("         Results written to: %s", csvOutputDir));
-        log.info(String.format("          Number of threads: %s", numberOfThreads));
+        log.info(String.format("   Number of dumper threads: %d", dumperThreads));
+        log.info(String.format("    Number of scout threads: %d", scoutThreads));
 
+        startExportMonitor();
+
+        List<NodeRefExt> startNodes = getStartNodes();
+        List<List<NodeRefExt>> levels = new ArrayList<>();
+        levels.add(startNodes);
+        List<NodeRefExt> nextLevelNodes;
+        for (int level = 0; ; level++) {
+            log.info("Starting level " + level + " export");
+            currentLevel = level;
+            tasksFinished = new AtomicInteger();
+            tasksSubmitted = new AtomicInteger();
+            nextLevelNodes = Collections.synchronizedList(new ArrayList<NodeRefExt>());
+            levels.add(nextLevelNodes);
+
+            List<NodeRefExt> currentLevelNodes = levels.get(level);
+            int nodesProBatch = (int) Math.ceil((double) currentLevelNodes.size() / scoutThreads);
+            int lower_bound = 0;
+            int upper_bound = 0;
+            int scout_tasks_submitted = 0;
+            for (int i = 0; i < scoutThreads; i++) {
+                upper_bound = (i + 1) * nodesProBatch;
+                if (upper_bound >= currentLevelNodes.size()) {
+                    scoutCompletionService.submit(new ScoutTask(
+                            currentLevelNodes.subList(lower_bound, currentLevelNodes.size()), nextLevelNodes), 1);
+                    scout_tasks_submitted++;
+                    break;
+                } else {
+                    scoutCompletionService.submit(new ScoutTask(
+                            currentLevelNodes.subList(lower_bound, upper_bound), nextLevelNodes), 1);
+                    scout_tasks_submitted++;
+                    lower_bound = upper_bound;
+                }
+            }
+
+            log.debug("Scout tasks submitted " + scout_tasks_submitted);
+            waitForScoutingToFinish(scout_tasks_submitted);
+            waitForLevelExportToFinish();
+            levels.set(level, null); // try to save some memory
+            if (nextLevelNodes.isEmpty()) {
+                log.info("No more levels to process, last level was: " + level);
+                break;
+            }
+        }
+        dumperService.shutdown();
+        scoutService.shutdown();
+        log.info(String.format("Level-wise export finished, elapsed time %s seconds", (System.currentTimeMillis() - startTime) / 1000));
+    }
+
+    private void startExportMonitor() {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                while (!executorService.isTerminated()){
+                while (!dumperService.isTerminated()) {
                     log.info(String.format("Current level: %d Tasks submitted: %d Tasks completed: %d",
                             currentLevel, tasksSubmitted, tasksFinished));
                     try {
@@ -143,73 +206,34 @@ public class ExportEngine {
                 }
             }
         }).start();
-
-        List<ExportNode> startNodes = getStartNodes();
-        List<List<ExportNode>> levels = new ArrayList<>();
-        levels.add(startNodes);
-        List<ExportNode> nextLevelNodes;
-        for (int level = 0; ; level++) {
-            log.info("Starting level " + level + " export");
-            currentLevel = level;
-            tasksFinished = 0;
-            tasksSubmitted = 0;
-            nextLevelNodes = new ArrayList<>();
-            levels.add(nextLevelNodes);
-            int nodeCounter = 0;
-            int lastDispatched = 0;
-            List<Future> exportTasks = new ArrayList<>();
-            for (ExportNode parentNode : levels.get(level)) {
-                if (!parentNode.isFolder) {
-                    continue;
-                }
-                List<ChildAssociationRef> childAssocs = nodeService.getChildAssocs(parentNode.nodeRef,
-                        ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL);
-                if (childAssocs.size() > 0) {
-                    for (ChildAssociationRef childAssoc : childAssocs) {
-                        nextLevelNodes.add(exportNodeBuilder.constructExportNode(childAssoc, parentNode.fullPath));
-                        nodeCounter++;
-                        if (nodeCounter - lastDispatched >= BATCH_SIZE) {
-                            exportTasks.add(
-                                    dispatchCurrentBatch(
-                                            new ArrayList<>(nextLevelNodes.subList(lastDispatched, nodeCounter)), level));
-                            log.debug("Tasks submitted: " + exportTasks.size());
-                            tasksSubmitted++;
-                            lastDispatched = nodeCounter;
-                        }
-                    }
-                }
-            }
-            if (nodeCounter > lastDispatched) {
-                exportTasks.add(
-                        dispatchCurrentBatch(nextLevelNodes.subList(lastDispatched, nodeCounter), level));
-                log.info("Tasks submitted: " + exportTasks.size());
-            }
-
-            waitForLevelToFinish(level, exportTasks);
-            levels.set(level, null); // try to save some memory
-            if (nextLevelNodes.isEmpty()) {
-                log.info("No more levels to process, last level was: " + level);
-                break;
-            }
-        }
-        executorService.shutdown();
-        log.info(String.format("Level-wise export finished, elapsed time %s seconds", (System.currentTimeMillis() - startTime) / 1000));
     }
 
-    private void waitForLevelToFinish(int level, List<Future> exportTasks) {
-        if (exportTasks.size() > 0) {
-            for (int i = 1; i <= exportTasks.size(); i++) {
+    private void waitForScoutingToFinish(int scout_tasks_submitted) {
+        if (scout_tasks_submitted > 0) {
+            for (int i = 0; i < scout_tasks_submitted; i++) {
                 try {
-                    completionService.take().get();
-                    log.debug("Tasks completed: " + i + " out of " + exportTasks.size());
+                    scoutCompletionService.take();
+                } catch (InterruptedException e) {
+                    log.error("Scouting interrupted", e);
+                }
+            }
+        }
+    }
+
+    private void waitForLevelExportToFinish() {
+        if (tasksSubmitted.get() > 0) {
+            for (int i = 1; i <= tasksSubmitted.get(); i++) {
+                try {
+                    dumperCompletionService.take().get();
+                    log.debug("Tasks completed: " + i + " out of " + tasksSubmitted.get());
                 } catch (ExecutionException | InterruptedException e) {
                     log.error("Export processing was interrupted");
                     throw new RuntimeException(e);
                 }
             }
-            closeCsvWriters(level);
-            closeProtoStreams(level);
-            log.info("Level " + level + " export is finished");
+            closeCsvWriters(currentLevel);
+            closeProtoStreams(currentLevel);
+            log.info("Level " + currentLevel + " export is finished");
         }
     }
 
@@ -255,23 +279,15 @@ public class ExportEngine {
         }
     }
 
-    private Future<?> dispatchCurrentBatch(List<ExportNode> exportNodes, int level) {
-        ExportTask exportTask = new ExportTask(exportNodes, level);
-        return completionService.submit(exportTask, 1);
-    }
-
-
-    private List<ExportNode> getStartNodes() {
-        List<ExportNode> startNodes = new ArrayList<>();
+    private List<NodeRefExt> getStartNodes() {
+        List<NodeRefExt> startNodes = new ArrayList<>();
         try (BufferedReader bufferedReader =
                      new BufferedReader(new FileReader(rootNodeListInput))) {
             String line;
             while ((line = bufferedReader.readLine()) != null) {
-                ExportNode startNode = new ExportNode();
-                startNode.nodeRef = new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, line);
-                startNode.name = (String) nodeService.getProperty(startNode.nodeRef, ContentModel.PROP_NAME);
-                startNode.fullPath = "/" + startNode.name;
-                startNode.isFolder = true;
+                NodeRef nodeRef = new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, line);
+                String fullPath = "/" + (String) nodeService.getProperty(nodeRef, ContentModel.PROP_NAME);
+                NodeRefExt startNode = new NodeRefExt(nodeRef, fullPath);
                 startNodes.add(startNode);
             }
         } catch (IOException e) {
@@ -327,7 +343,7 @@ public class ExportEngine {
                     log.error("Failed to write CSV line for child " + exportNode.fullPath);
                 }
             }
-            tasksFinished++;
+            tasksFinished.incrementAndGet();
         }
 
         private void exportMetadataToFileStructure(ExportNode node) {
@@ -378,6 +394,68 @@ public class ExportEngine {
                 protoStreams.put(threadName, protoStream);
             }
             this.protoStream = protoStreams.get(threadName);
+        }
+    }
+
+    private class ScoutTask implements Runnable {
+
+        List<NodeRefExt> parentNodes;
+        List<NodeRefExt> nextLevelNodes = new ArrayList<>();
+        List<NodeRefExt> globalNextLevelList;
+        List<ExportNode> nodesToDump = new ArrayList<>();
+
+        public ScoutTask(List<NodeRefExt> parentNodes, List<NodeRefExt> globalNextLevelList) {
+            this.parentNodes = parentNodes;
+            this.globalNextLevelList = globalNextLevelList;
+        }
+
+        @Override
+        public void run() {
+            try {
+                AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
+                int nodeCounter = 0;
+                int lastDispatched = 0;
+                int var10;
+                for (NodeRefExt parentNode : parentNodes) {
+                    try {
+                        List<ChildAssociationRef> childAssocs = nodeService.getChildAssocs(parentNode.nodeRef,
+                                ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL);
+                        if (childAssocs.size() > 0) {
+                            for (ChildAssociationRef childAssoc : childAssocs) {
+                                ExportNode exportNode = exportNodeBuilder.constructExportNode(childAssoc, parentNode.fullPath);
+                                if (exportNode.isFolder) {
+                                    nextLevelNodes.add(new NodeRefExt(exportNode.nodeRef, exportNode.fullPath));
+                                }
+                                nodesToDump.add(exportNode);
+                                nodeCounter++;
+                                if (nodeCounter - lastDispatched >= dumpBatchSize) {
+                                    dispatchCurrentBatch(
+                                            new ArrayList<>(nodesToDump.subList(lastDispatched, nodeCounter)), currentLevel);
+                                    var10 = tasksSubmitted.incrementAndGet();
+                                    log.debug("Tasks submitted: " + var10);
+                                    lastDispatched = nodeCounter;
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.error("Failed to scout parent node " + parentNode.fullPath + " " + parentNode.nodeRef, e);
+                    }
+                }
+                if (nodeCounter > lastDispatched) {
+                    dispatchCurrentBatch(nodesToDump.subList(lastDispatched, nodeCounter), currentLevel);
+                    var10 = tasksSubmitted.incrementAndGet();
+                    log.info("Tasks submitted: " + var10);
+                }
+                globalNextLevelList.addAll(nextLevelNodes);
+            } catch (Exception e){
+                log.error("Error in scout task", e);
+                throw e;
+            }
+        }
+
+        private void dispatchCurrentBatch(List<ExportNode> exportNodes, int level) {
+            ExportTask exportTask = new ExportTask(exportNodes, level);
+            dumperCompletionService.submit(exportTask, 1);
         }
     }
 
