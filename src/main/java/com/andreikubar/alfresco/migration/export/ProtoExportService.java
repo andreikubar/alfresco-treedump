@@ -87,10 +87,19 @@ public class ProtoExportService {
                         ExportProtos.AlfrescoNode.TranslatedProperty.newBuilder();
                 translatedProperty.setName(prop.getKey().getLocalName());
                 for (Locale locale : mlText.getLocales()) {
+                    String translatedText = mlText.getClosestValue(locale);
+                    ExportProtos.AlfrescoNode.Translation.Builder translation =
+                            ExportProtos.AlfrescoNode.Translation.newBuilder();
+                    translation.setLocale(locale.getLanguage());
+                    if (StringUtils.isNotBlank(translatedText)){
+                        translation.setTranslation(translatedText);
+                    }
+                    else {
+                        log.warn("Translation with empty value for node " + exportNode.fullPath +
+                                " translated property: " + prop.getKey().toPrefixString(namespaceService));
+                    }
                     translatedProperty.addTranslations(
-                            ExportProtos.AlfrescoNode.Translation.newBuilder()
-                            .setLocale(locale.getLanguage())
-                            .setTranslation(mlText.getClosestValue(locale))
+                            translation.build()
                     );
                 }
                 alfrescoNodeBuilder.addTranslatedProperties(

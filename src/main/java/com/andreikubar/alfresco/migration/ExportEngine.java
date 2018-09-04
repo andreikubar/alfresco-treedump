@@ -51,6 +51,10 @@ public class ExportEngine {
     private Map<Integer, Map<String, BufferedOutputStream>> levelProtoStreams = new HashMap<>();
     private Path datedExportFolder;
 
+    private int tasksSubmitted;
+    private int tasksFinished;
+    private int currentLevel;
+
     public ExportEngine(ServiceRegistry serviceRegistry, ContentStore defaultContentStore) {
         this.defaultContentStore = defaultContentStore;
         nodeService = serviceRegistry.getNodeService();
@@ -115,14 +119,40 @@ public class ExportEngine {
         String datedSubfolderName = format.format(date);
         this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
 
+        Calendar cal = Calendar.getInstance();
+        SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
+        String startDateTime = sdf.format(cal.getTime());
+        long startTime = System.currentTimeMillis();
+        log.info(String.format("Level-wise export starting - %s", startDateTime));
+        log.info(String.format("              Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
+        log.info(String.format("       Root nodes read from: %s", rootNodeListInput));
+        log.info(String.format("         Results written to: %s", csvOutputDir));
+        log.info(String.format("          Number of threads: %s", numberOfThreads));
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while (!executorService.isTerminated()){
+                    log.info(String.format("Current level: %d Tasks submitted: %d Tasks completed: %d",
+                            currentLevel, tasksSubmitted, tasksFinished));
+                    try {
+                        TimeUnit.SECONDS.sleep(7);
+                    } catch (InterruptedException e) {
+                        log.error("Task monitor interrupted");
+                    }
+                }
+            }
+        }).start();
+
         List<ExportNode> startNodes = getStartNodes();
         List<List<ExportNode>> levels = new ArrayList<>();
         levels.add(startNodes);
-
-        long startTime = System.currentTimeMillis();
         List<ExportNode> nextLevelNodes;
         for (int level = 0; ; level++) {
             log.info("Starting level " + level + " export");
+            currentLevel = level;
+            tasksFinished = 0;
+            tasksSubmitted = 0;
             nextLevelNodes = new ArrayList<>();
             levels.add(nextLevelNodes);
             int nodeCounter = 0;
@@ -143,6 +173,7 @@ public class ExportEngine {
                                     dispatchCurrentBatch(
                                             new ArrayList<>(nextLevelNodes.subList(lastDispatched, nodeCounter)), level));
                             log.debug("Tasks submitted: " + exportTasks.size());
+                            tasksSubmitted++;
                             lastDispatched = nodeCounter;
                         }
                     }
@@ -161,6 +192,7 @@ public class ExportEngine {
                 break;
             }
         }
+        executorService.shutdown();
         log.info(String.format("Level-wise export finished, elapsed time %s seconds", (System.currentTimeMillis() - startTime) / 1000));
     }
 
@@ -169,14 +201,7 @@ public class ExportEngine {
             for (int i = 1; i <= exportTasks.size(); i++) {
                 try {
                     completionService.take().get();
-                    if (log.isDebugEnabled()) {
-                        log.debug("Tasks completed: " + i + " out of " + exportTasks.size());
-                    }
-                    else {
-                        if (i % 100 == 0){
-                            log.info("Tasks completed: " + i + " out of " + exportTasks.size() + " level " + level);
-                        }
-                    }
+                    log.debug("Tasks completed: " + i + " out of " + exportTasks.size());
                 } catch (ExecutionException | InterruptedException e) {
                     log.error("Export processing was interrupted");
                     throw new RuntimeException(e);
@@ -189,14 +214,24 @@ public class ExportEngine {
     }
 
     private void closeProtoStreams(int level) {
-        for (Map.Entry<String, BufferedOutputStream> protoStream : levelProtoStreams.get(level).entrySet()){
+        for (Map.Entry<String, BufferedOutputStream> protoStream : levelProtoStreams.get(level).entrySet()) {
             try {
                 protoStream.getValue().close();
-            } catch (IOException e){
+            } catch (IOException e) {
                 log.error("Failed to close protoStream " + protoStream.getKey() + " for level " + level);
             }
         }
         levelProtoStreams.get(level).clear();
+    }
+
+    private void flushProtoStreams(int level) {
+        for (Map.Entry<String, BufferedOutputStream> protoStream : levelProtoStreams.get(level).entrySet()) {
+            try {
+                protoStream.getValue().flush();
+            } catch (IOException e) {
+                log.error("Failed to flush protoStream " + protoStream.getKey() + " for level " + level);
+            }
+        }
     }
 
     private void closeCsvWriters(int level) {
@@ -208,6 +243,16 @@ public class ExportEngine {
             }
         }
         levelThreadWriters.get(level).clear();
+    }
+
+    private void flushCsvWriters(int level) {
+        for (Map.Entry<String, BufferedWriter> threadWriter : levelThreadWriters.get(level).entrySet()) {
+            try {
+                threadWriter.getValue().flush();
+            } catch (IOException e) {
+                log.error("Failed to flush threadWriter " + threadWriter.getKey() + " for level " + level);
+            }
+        }
     }
 
     private Future<?> dispatchCurrentBatch(List<ExportNode> exportNodes, int level) {
@@ -263,7 +308,7 @@ public class ExportEngine {
                 //exportMetadataToFileStructure(exportNode);
                 try {
                     protoExportService.exportNodeToFile(exportNode, protoStream);
-                } catch (IOException e) {
+                } catch (Exception e) {
                     log.error("Failed to export node to protobuf " + exportNode.fullPath, e);
                 }
                 try {
@@ -278,10 +323,11 @@ public class ExportEngine {
                             exportNode.name,
                             exportNode.contentUrl,
                             exportNode.contentBytes);
-                } catch (IOException e) {
+                } catch (Exception e) {
                     log.error("Failed to write CSV line for child " + exportNode.fullPath);
                 }
             }
+            tasksFinished++;
         }
 
         private void exportMetadataToFileStructure(ExportNode node) {
@@ -334,4 +380,5 @@ public class ExportEngine {
             this.protoStream = protoStreams.get(threadName);
         }
     }
+
 }
