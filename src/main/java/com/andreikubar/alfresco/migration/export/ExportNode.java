@@ -16,4 +16,18 @@ public class ExportNode {
     public Map<QName, Serializable> properties;
     public String contentUrl = "";
     public long contentBytes = 0;
+
+    public ExportNode() {
+    }
+
+    public ExportNode(NodeRef nodeRef, String fullPath, boolean isFolder) {
+        this.nodeRef = nodeRef;
+        this.fullPath = fullPath;
+        this.isFolder = isFolder;
+    }
+
+    public ExportNode(NodeRef nodeRef, String fullPath) {
+        this.nodeRef = nodeRef;
+        this.fullPath = fullPath;
+    }
 }

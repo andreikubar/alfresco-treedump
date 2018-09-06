@@ -12,7 +12,7 @@
     </bean>
 
     <bean id="exportNodeBuilder" class="com.andreikubar.alfresco.migration.export.ExportNodeBuilder">
-        <property name="serviceRegistry" ref="ServiceRegistry"/>
+        <constructor-arg ref="ServiceRegistry"/>
         <property name="useCmName">
             <value>true</value>
         </property>

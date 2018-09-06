@@ -3,6 +3,9 @@ package com.andreikubar.alfresco.migration;
 import com.andreikubar.alfresco.migration.export.ExportNode;
 import com.andreikubar.alfresco.migration.export.ExportNodeBuilder;
 import com.andreikubar.alfresco.migration.export.wireline.WirelineExportService;
+import de.siegmar.fastcsv.reader.CsvContainer;
+import de.siegmar.fastcsv.reader.CsvReader;
+import de.siegmar.fastcsv.reader.CsvRow;
 import org.alfresco.model.ContentModel;
 import org.alfresco.repo.content.ContentStore;
 import org.alfresco.repo.security.authentication.AuthenticationUtil;
@@ -17,6 +20,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.*;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -48,6 +52,9 @@ public class TreeDumpEngine {
     private TreeDumperTask dumpTreeTask;
     private Map<String, BufferedWriter> threadWriters;
     private Path datedExportFolder;
+    private String currentNodeId;
+    private String currentNodeName;
+    private Map<String, String> startNodesInputMap;
 
     private ForkJoinPool forkJoinPool;
 
@@ -111,6 +118,7 @@ public class TreeDumpEngine {
     }
 
     void startAndWait() {
+        AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
         loadPropeties();
         createOrCleanCsvOutDir();
         this.contentStoreBase = defaultContentStore.getRootLocation();
@@ -119,26 +127,6 @@ public class TreeDumpEngine {
             this.exportNodeBuilder.setReadProperties(true);
         }
 
-        AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
-
-        List<ExportNode> startNodes = new ArrayList<>();
-        try (BufferedReader bufferedReader =
-                     new BufferedReader(new FileReader(rootNodeListInput))) {
-            String line;
-            while ((line = bufferedReader.readLine()) != null) {
-                ExportNode startNode = new ExportNode();
-                startNode.nodeRef = new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, line);
-                startNode.name = (String) nodeService.getProperty(startNode.nodeRef, ContentModel.PROP_NAME);
-                startNode.fullPath = "/" + startNode.name;
-                startNodes.add(startNode);
-            }
-        } catch (IOException e) {
-            log.error("Failed to read the root node list", e);
-            return;
-        } catch (Exception e) {
-            log.error("Failed constructing start nodes array", e);
-            return;
-        }
 
         if (forkJoinPool == null) forkJoinPool = new ForkJoinPool();
         threadWriters = new HashMap<>();
@@ -155,32 +143,68 @@ public class TreeDumpEngine {
         String startDateTime = sdf.format(cal.getTime());
         long startTime = System.currentTimeMillis();
 
-        log.info(String.format("TreeDump starting - %s", startDateTime));
-        log.info(String.format("    Check existence on disk: %s", checkPhysicalExistence));
-        log.info(String.format("         Content store base: %s", contentStoreBase));
-        log.info(String.format("              Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
-        log.info(String.format("       Root nodes read from: %s", rootNodeListInput));
-        log.info(String.format("         Results written to: %s", csvOutputDir));
-        log.info(String.format("         Metadata export is: %s", exportMetadata ? "ON" : "OFF"));
-        if (exportMetadata)
-            log.info(String.format("Metadata export destination: %s", datedExportFolder.toString()));
+        List<ExportNode> startNodes = readStartNodes();
 
-        dumpTreeTask = new TreeDumperTask(startNodes, 0);
-        forkJoinPool.execute(dumpTreeTask);
-        do {
-            log.info("******************************************");
-            log.info(String.format("Main: Parallelism: %d", forkJoinPool.getParallelism()));
-            log.info(String.format("Main: Active Threads: %d", forkJoinPool.getActiveThreadCount()));
-            log.info(String.format("Main: Task Count: %d", forkJoinPool.getQueuedTaskCount()));
-            log.info(String.format("Main: Steal Count: %d", forkJoinPool.getStealCount()));
-            log.info("******************************************");
-            try {
-                TimeUnit.SECONDS.sleep(5);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+        for (ExportNode startNode : startNodes) {
+            log.info(String.format("TreeDump starting - %s", startDateTime));
+            log.info(String.format("             Node to export: %s (%s)", startNodesInputMap.get(startNode.nodeRef.getId()), startNode.nodeRef));
+            log.info(String.format("    Check existence on disk: %s", checkPhysicalExistence));
+            log.info(String.format("         Content store base: %s", contentStoreBase));
+            log.info(String.format("              Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
+            log.info(String.format("       Root nodes read from: %s", rootNodeListInput));
+            log.info(String.format("         Results written to: %s", csvOutputDir));
+            log.info(String.format("         Metadata export is: %s", exportMetadata ? "ON" : "OFF"));
+            if (exportMetadata)
+                log.info(String.format("Metadata export destination: %s", datedExportFolder.toString()));
+
+            currentNodeId = startNode.nodeRef.getId();
+            currentNodeName = startNode.name;
+            List<ExportNode> exportNodeSingleList = Collections.singletonList(startNode);
+            if (exportMetadata) {
+                exportMetadataToFileStructure(startNode);
             }
-        } while (!dumpTreeTask.isDone());
+            dumpTreeTask = new TreeDumperTask(exportNodeSingleList, 0);
 
+            forkJoinPool.execute(dumpTreeTask);
+            do {
+                log.info("******************************************");
+                log.info(String.format("Main: Parallelism: %d", forkJoinPool.getParallelism()));
+                log.info(String.format("Main: Active Threads: %d", forkJoinPool.getActiveThreadCount()));
+                log.info(String.format("Main: Task Count: %d", forkJoinPool.getQueuedTaskCount()));
+                log.info(String.format("Main: Steal Count: %d", forkJoinPool.getStealCount()));
+                log.info("******************************************");
+                try {
+                    TimeUnit.SECONDS.sleep(5);
+                } catch (InterruptedException e) {
+                    log.error("Execution interrupted", e);
+                }
+            } while (!dumpTreeTask.isDone());
+
+            addDoneSuffixToExportFolder();
+
+            log.info(String.format("TreeDump for node %s finished", startNode.fullPath));
+            log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - startTime) / 1000));
+
+            flushThreadWriters();
+        }
+
+        closeThreadWriters();
+
+        log.info("TreeDump finished");
+        log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - startTime) / 1000));
+    }
+
+    private void addDoneSuffixToExportFolder() {
+        Path nodeIdExportPath = datedExportFolder.resolve(currentNodeId);
+        Path nodeIdExportDonePath = datedExportFolder.resolve(currentNodeId + ".done");
+        try {
+            Files.move(nodeIdExportPath, nodeIdExportDonePath);
+        } catch (IOException e) {
+            log.error("Failed to rename the export folder to done " + nodeIdExportPath);
+        }
+    }
+
+    private void closeThreadWriters() {
         for (BufferedWriter writer : threadWriters.values()) {
             try {
                 writer.close();
@@ -189,9 +213,38 @@ public class TreeDumpEngine {
             }
         }
         threadWriters.clear();
+    }
 
-        log.info("TreeDump finished");
-        log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - startTime) / 1000));
+    private void flushThreadWriters() {
+        for (BufferedWriter writer : threadWriters.values()) {
+            try {
+                writer.flush();
+            } catch (IOException e) {
+                log.error("Failed to flush BufferedWriter", e);
+            }
+        }
+    }
+
+    private List<ExportNode> readStartNodes() {
+        CsvReader csvReader = new CsvReader();
+        csvReader.setContainsHeader(false);
+        List<ExportNode> startNodes = new ArrayList<>();
+        startNodesInputMap = new HashMap<>();
+        CsvContainer startNodesContainer;
+        try {
+            startNodesContainer = csvReader.read(Paths.get(rootNodeListInput), Charset.forName("UTF-8"));
+        } catch (IOException e) {
+            log.error("Failed to read the rootnodes csv file " + rootNodeListInput);
+            throw new RuntimeException(e);
+        }
+        for (CsvRow row : startNodesContainer.getRows()) {
+            NodeRef nodeRef = new NodeRef(StoreRef.STORE_REF_WORKSPACE_SPACESSTORE, row.getField(0));
+            String fullPath = row.getField(1);
+            startNodesInputMap.put(nodeRef.getId(), fullPath);
+            ExportNode startNode = exportNodeBuilder.constructExportNode(nodeRef);
+            startNodes.add(startNode);
+        }
+        return startNodes;
     }
 
     void shutdown() {
@@ -208,8 +261,7 @@ public class TreeDumpEngine {
             } catch (IOException e) {
                 log.error("Failed to create output directory", e);
             }
-        }
-        else {
+        } else {
             try {
                 FileUtils.cleanDirectory(Paths.get(csvOutputDir).toFile());
             } catch (IOException e) {
@@ -361,23 +413,24 @@ public class TreeDumpEngine {
     }
 
     private void exportMetadataToFileStructure(ExportNode node) {
-        createDirectory(node);
+        Path exportBasePath = datedExportFolder.resolve(currentNodeId).resolve(currentNodeName);
+        createDirectory(node, exportBasePath);
         try {
-            wirelineExportService.writePropertyAndTranslationsFile(node, datedExportFolder);
-            wirelineExportService.writeAclFile(node, datedExportFolder);
+            wirelineExportService.writePropertyAndTranslationsFile(node, exportBasePath);
+            wirelineExportService.writeAclFile(node, exportBasePath);
         } catch (Exception e) {
             log.error("Error by processing node " + node.fullPath);
             throw new RuntimeException(e);
         }
     }
 
-    private void createDirectory(ExportNode node) {
+    private void createDirectory(ExportNode node, Path exportBasePath) {
         try {
             Path pathToCreate = node.isFolder ? Paths.get(node.fullPath) : Paths.get(node.fullPath).getParent();
             if (pathToCreate.getRoot() != null) {
                 pathToCreate = pathToCreate.subpath(0, pathToCreate.getNameCount());
             }
-            Files.createDirectories(datedExportFolder.resolve(pathToCreate));
+            Files.createDirectories(exportBasePath.resolve(pathToCreate));
         } catch (IOException e) {
             log.error(e);
             throw new RuntimeException(e);

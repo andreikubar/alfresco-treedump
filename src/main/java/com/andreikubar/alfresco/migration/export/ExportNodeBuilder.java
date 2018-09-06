@@ -10,7 +10,9 @@ import org.alfresco.service.cmr.repository.NodeRef;
 import org.alfresco.service.cmr.repository.NodeService;
 import org.alfresco.service.namespace.NamespaceService;
 import org.alfresco.service.namespace.QName;
+import org.apache.commons.lang.StringUtils;
 
+import javax.xml.soap.Node;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
@@ -20,13 +22,14 @@ public class ExportNodeBuilder {
     private static final QName FOLDER_TYPE = QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "folder");
     private static final QName FILE_TYPE = QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "content");
 
-    private ServiceRegistry serviceRegistry;
     private NodeService nodeService;
+    private DictionaryService dictionaryService;
     private Boolean useCmName;
     private Boolean readProperties = false;
 
-    public void setServiceRegistry(ServiceRegistry serviceRegistry) {
-        this.serviceRegistry = serviceRegistry;
+    public ExportNodeBuilder(ServiceRegistry serviceRegistry) {
+        nodeService = serviceRegistry.getNodeService();
+        dictionaryService = serviceRegistry.getDictionaryService();
     }
 
     public void setUseCmName(Boolean useCmName) {
@@ -41,15 +44,11 @@ public class ExportNodeBuilder {
         this.readProperties = readProperties;
     }
 
-    public ExportNode constructExportNode(ChildAssociationRef childAssociationRef, String parentFullPath){
-        nodeService = serviceRegistry.getNodeService();
-        DictionaryService dictionaryService = serviceRegistry.getDictionaryService();
-
+    public ExportNode constructExportNode(NodeRef nodeRef){
         if (useCmName == null) useCmName = true;
-
         ExportNode node = new ExportNode();
-        node.nodeRef = childAssociationRef.getChildRef();
-        node.nodeType = nodeService.getType(childAssociationRef.getChildRef());
+        node.nodeRef = nodeRef;
+        node.nodeType = nodeService.getType(nodeRef);
         node.isFolder = dictionaryService.isSubClass(node.nodeType, FOLDER_TYPE);
         node.isFile = dictionaryService.isSubClass(node.nodeType, FILE_TYPE);
 
@@ -65,22 +64,29 @@ public class ExportNodeBuilder {
             node.properties = new HashMap<>();
         }
 
-        node.name = makeNodeName(node, childAssociationRef.getQName().getLocalName());
+        node.name = makeNodeName(node);
+        node.fullPath = node.name;
+
+        return node;
+    }
+
+    public ExportNode constructExportNode(ChildAssociationRef childAssociationRef, String parentFullPath){
+        ExportNode node = constructExportNode(childAssociationRef.getChildRef());
+        if (StringUtils.isBlank(node.name)){
+            node.name = replaceIllegalChars(childAssociationRef.getQName().getLocalName());
+        }
         node.fullPath = parentFullPath + "/" + node.name;
         return node;
     }
 
-    private String makeNodeName(ExportNode node, String localName){
-        String name;
+    private String makeNodeName(ExportNode node){
+        String name = "";
         if (readProperties){
              name = ((String)node.properties.get(ContentModel.PROP_NAME));
         }
         else {
             if (useCmName) {
                 name  = (String)nodeService.getProperty(node.nodeRef, ContentModel.PROP_NAME);
-            }
-            else {
-                name = localName;
             }
         }
         return replaceIllegalChars(name);
