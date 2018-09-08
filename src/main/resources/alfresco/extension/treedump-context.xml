@@ -57,4 +57,10 @@
         <constructor-arg ref="exportEngine"/>
     </bean>
 
+    <bean id="webscript.com.andreikubar.alfresco.migration.export-levelwise-shutdown.get"
+          class="com.andreikubar.alfresco.migration.webscript.ExportLevelwiseShutdownWebscript"
+          parent="webscript">
+        <constructor-arg ref="exportEngine"/>
+    </bean>
+
 </beans>

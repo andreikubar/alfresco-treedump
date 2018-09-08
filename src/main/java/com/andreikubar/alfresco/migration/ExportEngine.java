@@ -61,6 +61,7 @@ public class ExportEngine {
     private AtomicInteger tasksSubmitted;
     private AtomicInteger tasksFinished;
     private int currentLevel;
+    private boolean cancelled;
 
     public ExportEngine(ServiceRegistry serviceRegistry, ContentStore defaultContentStore) {
         this.defaultContentStore = defaultContentStore;
@@ -112,7 +113,14 @@ public class ExportEngine {
         }
     }
 
+    public void shutdown(){
+        cancelled = true;
+        dumperService.shutdownNow();
+        scoutService.shutdownNow();
+    }
+
     public void doLevelWiseExport() {
+        cancelled = false;
         AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
         this.exportNodeBuilder.setReadProperties(true);
         loadPropeties();
@@ -150,6 +158,7 @@ public class ExportEngine {
         levels.add(startNodes);
         List<NodeRefExt> nextLevelNodes;
         for (int level = 0; ; level++) {
+            if (cancelled) { break; }
             log.info("Starting level " + level + " export");
             currentLevel = level;
             tasksFinished = new AtomicInteger();
@@ -321,6 +330,7 @@ public class ExportEngine {
             }
             AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
             for (ExportNode exportNode : exportNodes) {
+                if (cancelled) { log.info("Export to file cancelled"); break; }
                 //exportMetadataToFileStructure(exportNode);
                 try {
                     protoExportService.exportNodeToFile(exportNode, protoStream);
@@ -417,6 +427,7 @@ public class ExportEngine {
                 int lastDispatched = 0;
                 int var10;
                 for (NodeRefExt parentNode : parentNodes) {
+                    if (cancelled) { log.info("Scouting cancelled"); break; }
                     try {
                         List<ChildAssociationRef> childAssocs = nodeService.getChildAssocs(parentNode.nodeRef,
                                 ContentModel.ASSOC_CONTAINS, RegexQNamePattern.MATCH_ALL);

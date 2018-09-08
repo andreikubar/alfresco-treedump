@@ -1,6 +1,5 @@
 package com.andreikubar.alfresco.migration.export;
 
-import com.andreikubar.alfresco.migration.export.wireline.Translation;
 import com.andreikubar.alfresco.migration.proto.ExportProtos;
 import org.alfresco.model.ContentModel;
 import org.alfresco.service.ServiceRegistry;
@@ -16,13 +15,16 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.BufferedOutputStream;
-import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.Serializable;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.Date;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
-import static com.andreikubar.alfresco.migration.export.filter.ExportFilters.*;
+import static com.andreikubar.alfresco.migration.export.filter.ExportFilters.isIgnoredAspect;
+import static com.andreikubar.alfresco.migration.export.filter.ExportFilters.isIgnoredProperty;
 
 public class ProtoExportService {
     private Log log = LogFactory.getLog(ProtoExportService.class);
@@ -67,15 +69,43 @@ public class ProtoExportService {
                 return;
             }
             ContentData contentData = (ContentData) contentDataProperty;
-            alfrescoNodeBuilder.setContentData(
-                    ExportProtos.AlfrescoNode.ContentData.newBuilder()
-                    .setContentUrl(contentData.getContentUrl())
-                    .setMimeType(contentData.getMimetype())
-                    .setEncoding(contentData.getEncoding())
-                    .setSize(contentData.getSize())
-                    .setLocale(contentData.getLocale().toLanguageTag())
-                    .build()
-            );
+            ExportProtos.AlfrescoNode.ContentData.Builder protoContentData =
+                    ExportProtos.AlfrescoNode.ContentData.newBuilder();
+            if (contentData.getContentUrl() != null){
+                protoContentData.setContentUrl(contentData.getContentUrl());
+            }else {
+                log.error("Content URL was null for " + exportNode.fullPath);
+            }
+            if (contentData.getMimetype() != null){
+                protoContentData.setMimeType(contentData.getMimetype());
+            }
+            else {
+                log.error("Mimetype was null for " + exportNode.fullPath);
+            }
+            if (contentData.getEncoding() != null){
+                protoContentData.setEncoding(contentData.getEncoding());
+            }
+            else {
+                log.warn("Encoding was null for " + exportNode.fullPath);
+            }
+            if (contentData.getLocale() != null){
+                protoContentData.setLocale(contentData.getLocale().toLanguageTag());
+            }
+            else {
+                log.debug("Locale was null for " + exportNode.fullPath);
+            }
+            protoContentData.setSize(contentData.getSize());
+
+            if (protoContentData.hasContentUrl() && protoContentData.hasMimeType()) {
+                alfrescoNodeBuilder.setContentData(
+                        protoContentData.build()
+                );
+            }
+            else {
+                throw new RuntimeException(
+                        String.format("Failed to transfer ContentData property for %s, URL or mimetype was null",
+                                exportNode.fullPath));
+            }
         }
     }
 
