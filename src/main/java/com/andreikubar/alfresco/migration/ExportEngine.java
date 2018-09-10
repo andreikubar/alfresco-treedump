@@ -58,8 +58,8 @@ public class ExportEngine {
     private Map<Integer, Map<String, BufferedOutputStream>> levelProtoStreams = new HashMap<>();
     private Path datedExportFolder;
 
-    private AtomicInteger tasksSubmitted;
-    private AtomicInteger tasksFinished;
+    private AtomicInteger tasksSubmitted = new AtomicInteger();
+    private AtomicInteger tasksFinished = new AtomicInteger();
     private int currentLevel;
     private boolean cancelled;
 
@@ -161,8 +161,8 @@ public class ExportEngine {
             if (cancelled) { break; }
             log.info("Starting level " + level + " export");
             currentLevel = level;
-            tasksFinished = new AtomicInteger();
-            tasksSubmitted = new AtomicInteger();
+            tasksFinished.set(0);
+            tasksSubmitted.set(0);
             nextLevelNodes = Collections.synchronizedList(new ArrayList<NodeRefExt>());
             levels.add(nextLevelNodes);
 
@@ -206,7 +206,7 @@ public class ExportEngine {
             public void run() {
                 while (!dumperService.isTerminated()) {
                     log.info(String.format("Current level: %d Tasks submitted: %d Tasks completed: %d",
-                            currentLevel, tasksSubmitted, tasksFinished));
+                            currentLevel, tasksSubmitted.get(), tasksFinished.get()));
                     try {
                         TimeUnit.SECONDS.sleep(7);
                     } catch (InterruptedException e) {
