@@ -93,7 +93,8 @@ public class TreeDumpEngine {
             }
 
             this.exportMetadata = Boolean.valueOf(properties.getProperty("exportMetadata"));
-            if (this.exportMetadata && StringUtils.isBlank(this.exportDestination = properties.getProperty("exportDestination"))) {
+            this.exportDestination = properties.getProperty("exportDestination");
+            if (this.exportMetadata && StringUtils.isBlank(this.exportDestination)) {
                 throw new IllegalArgumentException("parameter exportDestination is missing");
             }
 
@@ -133,12 +134,11 @@ public class TreeDumpEngine {
         if (forkJoinPool == null || forkJoinPool.isTerminated()) forkJoinPool = new ForkJoinPool();
         threadWriters = new HashMap<>();
 
-        if (exportMetadata) {
-            SimpleDateFormat format = new SimpleDateFormat("yyyyMMdd-HHmm");
-            Date date = new Date();
-            String datedSubfolderName = format.format(date);
-            this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
-        }
+        SimpleDateFormat format = new SimpleDateFormat("yyyyMMdd-HHmm");
+        Date date = new Date();
+        String datedSubfolderName = format.format(date);
+        this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
+
 
         Calendar cal = Calendar.getInstance();
         SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
@@ -400,7 +400,15 @@ public class TreeDumpEngine {
     private boolean existsOnDisk(NodeRef childRef) {
         ContentData contentData = (ContentData) nodeService.getProperty(childRef,
                 QName.createQName(NamespaceService.CONTENT_MODEL_1_0_URI, "content"));
+        if (contentData == null) {
+            log.warn("Type is Content but ContentData is null");
+            return false;
+        }
         String contentURL = contentData.getContentUrl();
+        if (contentURL == null){
+            log.warn("Type is Content but ContentUrl is null");
+            return false;
+        }
         String contentLocationWithinStore = contentURL.replace("store://", "");
         Path pathToCheck = Paths.get(contentStoreBase, contentLocationWithinStore);
         boolean fileExists = Files.exists(pathToCheck);

@@ -38,7 +38,7 @@ public class TreeDump extends DeclarativeWebScript {
                         treeDumpEngine.startAndWait();
                     }
                     catch (Exception e){
-                        log.error(e);
+                        log.error("Error while processing treedump", e);
                     }
                 }
             });
