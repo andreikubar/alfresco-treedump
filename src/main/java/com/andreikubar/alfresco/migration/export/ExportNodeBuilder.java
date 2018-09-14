@@ -4,6 +4,7 @@ import org.alfresco.model.ContentModel;
 import org.alfresco.repo.node.MLPropertyInterceptor;
 import org.alfresco.service.ServiceRegistry;
 import org.alfresco.service.cmr.dictionary.DictionaryService;
+import org.alfresco.service.cmr.model.FileInfo;
 import org.alfresco.service.cmr.repository.ChildAssociationRef;
 import org.alfresco.service.cmr.repository.ContentData;
 import org.alfresco.service.cmr.repository.NodeRef;
@@ -54,11 +55,7 @@ public class ExportNodeBuilder {
 
         if (readProperties){
             node.properties = readProperties(node.nodeRef);
-            if (node.properties.containsKey(ContentModel.PROP_CONTENT)){
-                ContentData contentData = (ContentData) node.properties.get(ContentModel.PROP_CONTENT);
-                node.contentUrl = contentData.getContentUrl();
-                node.contentBytes = contentData.getSize();
-            }
+            setContentData(node);
         }
         else {
             node.properties = new HashMap<>();
@@ -77,6 +74,27 @@ public class ExportNodeBuilder {
         }
         node.fullPath = parentFullPath + "/" + node.name;
         return node;
+    }
+
+    public ExportNode constructExportNode(FileInfo fileInfo, String parentFullPath){
+        ExportNode node = new ExportNode();
+        node.nodeRef = fileInfo.getNodeRef();
+        node.nodeType = fileInfo.getType();
+        node.isFolder = fileInfo.isFolder();
+        node.isFile = !fileInfo.isFolder();
+        node.properties = fileInfo.getProperties();
+        node.name = replaceIllegalChars(fileInfo.getName());
+        setContentData(node);
+        node.fullPath = parentFullPath + "/" + node.name;
+        return node;
+    }
+
+    private void setContentData(ExportNode node) {
+        if (node.properties.containsKey(ContentModel.PROP_CONTENT)){
+            ContentData contentData = (ContentData) node.properties.get(ContentModel.PROP_CONTENT);
+            node.contentUrl = contentData.getContentUrl();
+            node.contentBytes = contentData.getSize();
+        }
     }
 
     private String makeNodeName(ExportNode node){

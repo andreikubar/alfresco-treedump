@@ -21,6 +21,9 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 public class WirelineExportService {
+    public static final String METADATA_PROPERTIES_SUFFIX = ".metadata.properties.xml";
+    public static final String ACL_SUFFIX = ".acl";
+    public static final String LOCALE_JSON_SUFFIX = ".locale.json";
     private Log log = LogFactory.getLog(WirelineExportService.class);
 
     ServiceRegistry serviceRegistry;
@@ -69,7 +72,7 @@ public class WirelineExportService {
         String xmlContent = FileBuilder.buildMetadataFileContent(convertedNodeType, convertedAspects,
                 convertedProperties);
 
-        Path metadataFile = constructMetadataPath(node, exportDestination, ".metadata.properties.xml");
+        Path metadataFile = constructMetadataPath(node, exportDestination, METADATA_PROPERTIES_SUFFIX);
         try (BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(
                 new FileOutputStream(metadataFile.toFile()), "UTF8"))) {
             bw.write(xmlContent);
@@ -86,7 +89,7 @@ public class WirelineExportService {
         Set<AccessPermission> accessPermissions = permissionService.getAllSetPermissions(node.nodeRef);
         boolean inherited = permissionService.getInheritParentPermissions(node.nodeRef);
         String xmlContent = FileBuilder.buildAclFileContent(accessPermissions, inherited);
-        Path aclFile = constructMetadataPath(node, exportDestination, ".acl");
+        Path aclFile = constructMetadataPath(node, exportDestination, ACL_SUFFIX);
         try (BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(
                 new FileOutputStream(aclFile.toFile()), "UTF8"))) {
             bw.write(xmlContent);
@@ -98,7 +101,7 @@ public class WirelineExportService {
 
     public void writeTranslationsFile(ExportNode node, Map<String, List<Translation>> translations, Path exportDestination) {
         String xmlContent = FileBuilder.buildTranslationFileContent(translations);
-        Path translationsFile = constructMetadataPath(node, exportDestination, ".locale.json");
+        Path translationsFile = constructMetadataPath(node, exportDestination, LOCALE_JSON_SUFFIX);
         try (BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(
                 new FileOutputStream(translationsFile.toFile()), "UTF8"))) {
             bw.write(xmlContent);
@@ -109,17 +112,17 @@ public class WirelineExportService {
     }
 
     private Path constructMetadataPath(ExportNode node, Path exportDestination, String suffix) {
-        Path metadataPath = exportDestination.resolve(
-                (getRelativeNodePath(node)) + suffix
-        );
-        if (metadataPath.toAbsolutePath().toString().getBytes().length > 260) {
-            String nodePathShort = getNodePathNodeRefBased(node);
-            metadataPath = exportDestination.resolve(nodePathShort + suffix);
+        Path basePath = exportDestination.resolve((getRelativeNodePath(node)));
+        if (basePath.toString().getBytes().length + METADATA_PROPERTIES_SUFFIX.getBytes().length > 260){
+            return exportDestination.resolve((getRelativeNodePath(node)) + suffix);
         }
-        return metadataPath;
+        else {
+            String nodePathShort = getNodePathNodeRefBased(node);
+            return exportDestination.resolve(nodePathShort + suffix);
+        }
     }
 
-    public Map<String, List<Translation>> getMultilingualProperties(Map<QName, Serializable> props) {
+    private Map<String, List<Translation>> getMultilingualProperties(Map<QName, Serializable> props) {
         Map<String, List<Translation>> translationMap = new HashMap<>();
         for (Map.Entry<QName, Serializable> prop : props.entrySet()) {
             if (prop.getValue() instanceof MLText) {
@@ -209,7 +212,6 @@ public class WirelineExportService {
 
     private String getNodePathNodeRefBased(ExportNode node) {
         Path nodeFullPath = Paths.get(getRelativeNodePath(node));
-        String nodeFullPathWithNodeRefAsFileName = nodeFullPath.getParent().toString() + "/" + node.nodeRef.getId();
-        return nodeFullPathWithNodeRefAsFileName;
+        return nodeFullPath.getParent().toString() + "/" + node.nodeRef.getId();
     }
 }

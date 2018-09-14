@@ -25,7 +25,7 @@ public class ObjectTypeConverter {
         objectTypes.put("sc:orderFinishedContainer", "wln:orderFinishedContainer");
         objectTypes.put("sc:orderArchivedContainer", "wln:orderArchivedContainer");
         objectTypes.put("sc:order", "wln:order");
-        objectTypes.put("sc:variant", "	wln:variant");
+        objectTypes.put("sc:variant", "wln:variant");
         objectTypes.put("sc:dossierSubSpace", "wln:dossierSubSpace");
         objectTypes.put("sc:dmInboxSpace", "wln:dmInboxSpace");
         objectTypes.put("sc:attachmentSpace", "wln:attachmentSpace");
