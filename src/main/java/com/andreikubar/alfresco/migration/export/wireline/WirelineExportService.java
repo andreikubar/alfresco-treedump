@@ -114,11 +114,11 @@ public class WirelineExportService {
     private Path constructMetadataPath(ExportNode node, Path exportDestination, String suffix) {
         Path basePath = exportDestination.resolve((getRelativeNodePath(node)));
         if (basePath.toString().getBytes().length + METADATA_PROPERTIES_SUFFIX.getBytes().length > 260){
-            return exportDestination.resolve((getRelativeNodePath(node)) + suffix);
-        }
-        else {
             String nodePathShort = getNodePathNodeRefBased(node);
             return exportDestination.resolve(nodePathShort + suffix);
+        }
+        else {
+            return exportDestination.resolve((getRelativeNodePath(node)) + suffix);
         }
     }
 
@@ -212,6 +212,11 @@ public class WirelineExportService {
 
     private String getNodePathNodeRefBased(ExportNode node) {
         Path nodeFullPath = Paths.get(getRelativeNodePath(node));
-        return nodeFullPath.getParent().toString() + "/" + node.nodeRef.getId();
+        if (nodeFullPath.getParent() != null){
+            return nodeFullPath.getParent().resolve(node.nodeRef.getId()).toString();
+        }
+        else {
+            return node.nodeRef.getId();
+        }
     }
 }
