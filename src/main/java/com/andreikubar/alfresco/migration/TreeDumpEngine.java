@@ -143,6 +143,14 @@ public class TreeDumpEngine {
     }
 
     void startAndWait() {
+        if (forkJoinPool == null || forkJoinPool.isTerminated()) {
+            forkJoinPool = new ForkJoinPool();
+        }
+        else if (forkJoinPool.isTerminating()){
+            log.error("ForkJoin pool is still terminating");
+            log.error("Active threads: " + forkJoinPool.getActiveThreadCount());
+            throw new RuntimeException("ForkJoin Pool is still terminating");
+        }
         cancelled = false;
         totalChildrenFound.set(0);
         AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
@@ -155,7 +163,7 @@ public class TreeDumpEngine {
         }
 
 
-        if (forkJoinPool == null || forkJoinPool.isTerminated()) forkJoinPool = new ForkJoinPool();
+
         threadWriters = new HashMap<>();
 
         SimpleDateFormat format = new SimpleDateFormat("yyyyMMdd-HHmm");
@@ -342,6 +350,9 @@ public class TreeDumpEngine {
             AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
 
             for (ExportNode parentNode : parentNodes) {
+                if (cancelled){
+                    throw new RuntimeException("Task cancelled");
+                }
                 try {
                     if (childQueryMode == ChildQueryMode.WITH_PAGING) {
                         processChildNodesWithPaging(parentNode);
@@ -360,6 +371,9 @@ public class TreeDumpEngine {
         }
 
         private void processSubFoldersRecursively() {
+            if (cancelled){
+                return;
+            }
             if (subFolders.size() > 0) {
                 int batch_size = foldersProBatch;
                 if (subFolders.size() >= batch_size) {
@@ -441,6 +455,9 @@ public class TreeDumpEngine {
             totalChildrenFound.getAndAdd(childAssocs.size());
 
             for (ChildAssociationRef assoc : childAssocs) {
+                if (cancelled) {
+                    break;
+                }
                 try {
                     ExportNode childNode = exportNodeBuilder.constructExportNode(assoc, parentNode.fullPath);
                     if (childNode.isFolder) {

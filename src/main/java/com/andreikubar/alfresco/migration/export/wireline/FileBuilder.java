@@ -1,12 +1,12 @@
 package com.andreikubar.alfresco.migration.export.wireline;
 
 import org.alfresco.service.cmr.security.AccessPermission;
+import org.apache.commons.text.StringEscapeUtils;
 import org.json.simple.JSONObject;
 
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+
+import java.util.*;
+
 
 public final class FileBuilder {
 
@@ -110,12 +110,7 @@ public final class FileBuilder {
     }
 
     private static String htmlEncode(String value) {
-        //format &
-        value = value.replaceAll("&", "&amp;");
-        //format < and >
-        value = value.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-
-        return value;
+        return StringEscapeUtils.escapeXml10(value);
     }
 
     private static String convertPermission(String permission) {
