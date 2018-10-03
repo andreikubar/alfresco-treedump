@@ -1,7 +1,7 @@
 package com.andreikubar.alfresco.migration.export.wireline;
 
 import org.alfresco.service.cmr.security.AccessPermission;
-import org.apache.commons.text.StringEscapeUtils;
+import org.apache.commons.lang3.StringEscapeUtils;
 import org.json.simple.JSONObject;
 
 

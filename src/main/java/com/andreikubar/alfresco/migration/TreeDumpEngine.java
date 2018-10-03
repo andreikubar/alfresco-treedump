@@ -68,6 +68,7 @@ public class TreeDumpEngine {
     private Map<String, BufferedWriter> threadWriters;
     private Path datedExportFolder;
     private String currentNodeId;
+    private String currentParentPathAtSource;
     private Path currentExportBasePath;
     private Map<String, Map<String, String>> startNodesInputMap;
     private AtomicInteger totalChildrenFound = new AtomicInteger();
@@ -143,6 +144,7 @@ public class TreeDumpEngine {
     }
 
     void startAndWait() {
+        log.info("initializing forkjoin pool...");
         if (forkJoinPool == null || forkJoinPool.isTerminated()) {
             forkJoinPool = new ForkJoinPool();
         }
@@ -154,23 +156,21 @@ public class TreeDumpEngine {
         cancelled = false;
         totalChildrenFound.set(0);
         AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
+        log.info("loading properties...");
         loadPropeties();
+        log.info("cleaning csv output directory...");
         createOrCleanCsvOutDir();
         this.contentStoreBase = defaultContentStore.getRootLocation();
         this.exportNodeBuilder.setUseCmName(this.useCmName);
         if (this.exportMetadata) {
             this.exportNodeBuilder.setReadProperties(true);
         }
-
-
-
         threadWriters = new HashMap<>();
 
         SimpleDateFormat format = new SimpleDateFormat("yyyyMMdd-HHmm");
         Date date = new Date();
         String datedSubfolderName = format.format(date);
         this.datedExportFolder = Paths.get(exportDestination).resolve(datedSubfolderName);
-
 
         Calendar cal = Calendar.getInstance();
         SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
@@ -179,11 +179,12 @@ public class TreeDumpEngine {
         List<ExportNode> startNodes = readStartNodes();
 
         for (ExportNode startNode : startNodes) {
-            String startNodeFullPath = startNodesInputMap.get(startNode.nodeRef.getId()).get(PROPERTY_FULL_PATH_AT_SOURCE);
             currentNodeId = startNode.nodeRef.getId();
-            List<ExportNode> exportNodeSingleList = Collections.singletonList(startNode);
-            String nodeExportId = startNodesInputMap.get(startNode.nodeRef.getId()).get(PROPERTY_EXPORT_ID);
+            String startNodeFullPath = startNodesInputMap.get(currentNodeId).get(PROPERTY_FULL_PATH_AT_SOURCE);
+            currentParentPathAtSource = StringUtils.substringBeforeLast(startNodeFullPath,"/");
+            String nodeExportId = startNodesInputMap.get(currentNodeId).get(PROPERTY_EXPORT_ID);
             currentExportBasePath = datedExportFolder.resolve(nodeExportId);
+            List<ExportNode> exportNodeSingleList = Collections.singletonList(startNode);
 
             log.info("******************************************");
             log.info(String.format("TreeDump starting - %s", startDateTime));
@@ -489,7 +490,7 @@ public class TreeDumpEngine {
                     childNode.nodeType,
                     recursionLevel,
                     childNode.isFolder,
-                    parentNode.fullPath,
+                     currentParentPathAtSource + "/" + parentNode.fullPath,
                     childNode.contentUrl,
                     childNode.contentBytes);
         }
@@ -532,7 +533,12 @@ public class TreeDumpEngine {
     }
 
     private void exportMetadataToFileStructure(ExportNode node) {
-        createDirectory(node, currentExportBasePath);
+        try {
+            createDirectory(node, currentExportBasePath);
+        } catch (Exception e){
+            log.error("Failed to create directory " + currentExportBasePath, e);
+            throw e;
+        }
         try {
             wirelineExportService.writePropertyAndTranslationsFile(node, currentExportBasePath);
             wirelineExportService.writeAclFile(node, currentExportBasePath);
