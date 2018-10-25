@@ -41,8 +41,10 @@ public class TreeDumpEngine {
     public static final String PROPERTY_FULL_PATH_AT_SOURCE = "fullPathAtSource";
     public static final String PROPERTY_EXPORT_ID = "exportId";
     public static final int MAX_ITEMS_PER_PAGE = 10;
+    public static final String MARKER_EXPORT_FINISHED = ".exported";
 
-    private enum ChildQueryMode {WITH_PAGING, NO_PAGING}
+
+    private enum ChildQueryMode {WITH_PAGING, NO_PAGING;}
 
     ;
     private Log log = LogFactory.getLog(TreeDumpEngine.class);
@@ -57,6 +59,7 @@ public class TreeDumpEngine {
     private Boolean useCmName;
     private int foldersProBatch;
     private ChildQueryMode childQueryMode;
+    private boolean exportParentPath;
 
     private ExportNodeBuilder exportNodeBuilder;
     private NodeService nodeService;
@@ -111,6 +114,7 @@ public class TreeDumpEngine {
             }
 
             this.exportMetadata = Boolean.valueOf(properties.getProperty("exportMetadata"));
+            this.exportParentPath = Boolean.valueOf(properties.getProperty("exportParentPath"));
             this.exportDestination = properties.getProperty("exportDestination");
             if (this.exportMetadata && StringUtils.isBlank(this.exportDestination)) {
                 throw new IllegalArgumentException("parameter exportDestination is missing");
@@ -143,12 +147,11 @@ public class TreeDumpEngine {
         this.exportNodeBuilder = exportNodeBuilder;
     }
 
-    void startAndWait() {
+    void startAndWait() throws IOException {
         log.info("initializing forkjoin pool...");
         if (forkJoinPool == null || forkJoinPool.isTerminated()) {
             forkJoinPool = new ForkJoinPool();
-        }
-        else if (forkJoinPool.isTerminating()){
+        } else if (forkJoinPool.isTerminating()) {
             log.error("ForkJoin pool is still terminating");
             log.error("Active threads: " + forkJoinPool.getActiveThreadCount());
             throw new RuntimeException("ForkJoin Pool is still terminating");
@@ -178,12 +181,20 @@ public class TreeDumpEngine {
         long startTime = System.currentTimeMillis();
         List<ExportNode> startNodes = readStartNodes();
 
+        //precreate all export directories for import to start monitoring them
+        for (Map<String, String> startNodeProperties : startNodesInputMap.values()){
+            String exportId = startNodeProperties.get(PROPERTY_EXPORT_ID);
+            Files.createDirectories(this.datedExportFolder.resolve(exportId));
+        }
+
         for (ExportNode startNode : startNodes) {
             currentNodeId = startNode.nodeRef.getId();
             String startNodeFullPath = startNodesInputMap.get(currentNodeId).get(PROPERTY_FULL_PATH_AT_SOURCE);
-            currentParentPathAtSource = StringUtils.substringBeforeLast(startNodeFullPath,"/");
+            currentParentPathAtSource = StringUtils.substringBeforeLast(startNodeFullPath, "/");
             String nodeExportId = startNodesInputMap.get(currentNodeId).get(PROPERTY_EXPORT_ID);
             currentExportBasePath = datedExportFolder.resolve(nodeExportId);
+
+
             List<ExportNode> exportNodeSingleList = Collections.singletonList(startNode);
 
             log.info("******************************************");
@@ -201,6 +212,22 @@ public class TreeDumpEngine {
             }
 
             if (exportMetadata) {
+                if (exportParentPath) {
+                    String[] parentNames = StringUtils.removeStart(currentParentPathAtSource, "/").split("/");
+                    ArrayDeque<ExportNode> parentNodes = new ArrayDeque<>();
+                    NodeRef currentNodeRef = startNode.nodeRef;
+                    while (parentNodes.size() < parentNames.length) {
+                        NodeRef parentNodeRef = nodeService.getPrimaryParent(currentNodeRef).getParentRef();
+                        ExportNode parentNode = exportNodeBuilder.constructExportNode(parentNodeRef);
+                        parentNodes.push(parentNode);
+                        currentNodeRef = parentNodeRef;
+                    }
+                    while (parentNodes.peek() != null) {
+                        ExportNode parentNode = parentNodes.pop();
+                        exportMetadataToFileStructure(parentNode);
+                        currentExportBasePath = currentExportBasePath.resolve(parentNode.name);
+                    }
+                }
                 exportMetadataToFileStructure(startNode);
             }
             dumpTreeTask = new TreeDumperTask(exportNodeSingleList, 0);
@@ -223,7 +250,7 @@ public class TreeDumpEngine {
                 }
             } while (!dumpTreeTask.isDone());
 
-            addDoneSuffixToExportFolder();
+            addDoneSuffixToExportFolder(nodeExportId);
 
             log.info(String.format("TreeDump finished for node %s", startNodeFullPath));
             log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - taskStartTime) / 1000));
@@ -240,12 +267,11 @@ public class TreeDumpEngine {
         log.info("******************************************");
     }
 
-    private void addDoneSuffixToExportFolder() {
-
-        Path exportDonePath = currentExportBasePath.getParent().resolve(
-                currentExportBasePath.getFileName().toString() + ".done");
+    private void addDoneSuffixToExportFolder(String nodeExportId) {
+        Path exportIdFolder = datedExportFolder.resolve(nodeExportId);
+        Path exportDonePath = datedExportFolder.resolve(nodeExportId + MARKER_EXPORT_FINISHED);
         try {
-            Files.move(currentExportBasePath, exportDonePath);
+            Files.move(exportIdFolder, exportDonePath);
         } catch (IOException e) {
             log.error("Failed to rename the export folder to done " + currentExportBasePath.toString());
         }
@@ -351,7 +377,7 @@ public class TreeDumpEngine {
             AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
 
             for (ExportNode parentNode : parentNodes) {
-                if (cancelled){
+                if (cancelled) {
                     throw new RuntimeException("Task cancelled");
                 }
                 try {
@@ -372,7 +398,7 @@ public class TreeDumpEngine {
         }
 
         private void processSubFoldersRecursively() {
-            if (cancelled){
+            if (cancelled) {
                 return;
             }
             if (subFolders.size() > 0) {
@@ -490,7 +516,7 @@ public class TreeDumpEngine {
                     childNode.nodeType,
                     recursionLevel,
                     childNode.isFolder,
-                     currentParentPathAtSource + "/" + parentNode.fullPath,
+                    currentParentPathAtSource + "/" + parentNode.fullPath,
                     childNode.contentUrl,
                     childNode.contentBytes);
         }
@@ -535,7 +561,7 @@ public class TreeDumpEngine {
     private void exportMetadataToFileStructure(ExportNode node) {
         try {
             createDirectory(node, currentExportBasePath);
-        } catch (Exception e){
+        } catch (Exception e) {
             log.error("Failed to create directory " + currentExportBasePath, e);
             throw e;
         }
