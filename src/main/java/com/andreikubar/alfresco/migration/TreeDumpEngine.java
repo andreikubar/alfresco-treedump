@@ -60,6 +60,7 @@ public class TreeDumpEngine {
     private int foldersProBatch;
     private ChildQueryMode childQueryMode;
     private boolean exportParentPath;
+    private int numOfThreads;
 
     private ExportNodeBuilder exportNodeBuilder;
     private NodeService nodeService;
@@ -134,6 +135,12 @@ public class TreeDumpEngine {
                 this.childQueryMode = ChildQueryMode.NO_PAGING;
             }
 
+            try {
+                this.numOfThreads = Integer.parseInt(properties.getProperty("numOfThreads"));
+            } catch (NumberFormatException e){
+                this.numOfThreads = Runtime.getRuntime().availableProcessors();
+            }
+
 
         } catch (FileNotFoundException e) {
             log.error("Property file not found " + this.propertyFile);
@@ -148,9 +155,11 @@ public class TreeDumpEngine {
     }
 
     void startAndWait() throws IOException {
+        log.info("loading properties...");
+        loadPropeties();
         log.info("initializing forkjoin pool...");
         if (forkJoinPool == null || forkJoinPool.isTerminated()) {
-            forkJoinPool = new ForkJoinPool();
+            forkJoinPool = new ForkJoinPool(this.numOfThreads);
         } else if (forkJoinPool.isTerminating()) {
             log.error("ForkJoin pool is still terminating");
             log.error("Active threads: " + forkJoinPool.getActiveThreadCount());
@@ -159,8 +168,6 @@ public class TreeDumpEngine {
         cancelled = false;
         totalChildrenFound.set(0);
         AuthenticationUtil.setAdminUserAsFullyAuthenticatedUser();
-        log.info("loading properties...");
-        loadPropeties();
         log.info("cleaning csv output directory...");
         createOrCleanCsvOutDir();
         this.contentStoreBase = defaultContentStore.getRootLocation();
@@ -187,78 +194,79 @@ public class TreeDumpEngine {
             Files.createDirectories(this.datedExportFolder.resolve(exportId));
         }
 
-        for (ExportNode startNode : startNodes) {
-            currentNodeId = startNode.nodeRef.getId();
-            String startNodeFullPath = startNodesInputMap.get(currentNodeId).get(PROPERTY_FULL_PATH_AT_SOURCE);
-            currentParentPathAtSource = StringUtils.substringBeforeLast(startNodeFullPath, "/");
-            String nodeExportId = startNodesInputMap.get(currentNodeId).get(PROPERTY_EXPORT_ID);
-            currentExportBasePath = datedExportFolder.resolve(nodeExportId);
+        try {
+            for (ExportNode startNode : startNodes) {
+                currentNodeId = startNode.nodeRef.getId();
+                String startNodeFullPath = startNodesInputMap.get(currentNodeId).get(PROPERTY_FULL_PATH_AT_SOURCE);
+                currentParentPathAtSource = StringUtils.substringBeforeLast(startNodeFullPath, "/");
+                String nodeExportId = startNodesInputMap.get(currentNodeId).get(PROPERTY_EXPORT_ID);
+                currentExportBasePath = datedExportFolder.resolve(nodeExportId);
 
 
-            List<ExportNode> exportNodeSingleList = Collections.singletonList(startNode);
+                List<ExportNode> exportNodeSingleList = Collections.singletonList(startNode);
 
-            log.info("******************************************");
-            log.info(String.format("TreeDump starting - %s", startDateTime));
-            log.info(String.format("             Node to export: %s (%s)", startNodeFullPath, startNode.nodeRef));
-            log.info(String.format("    Check existence on disk: %s", checkPhysicalExistence));
-            log.info(String.format("         Content store base: %s", contentStoreBase));
-            log.info(String.format("              Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
-            log.info(String.format("       Root nodes read from: %s", rootNodeListInput));
-            log.info(String.format("         Results written to: %s", csvOutputDir));
-            log.info(String.format("         Metadata export is: %s", exportMetadata ? "ON" : "OFF"));
-            log.info(String.format("                  Paging is: %s", childQueryMode == ChildQueryMode.WITH_PAGING ? "ON" : "OFF"));
-            if (exportMetadata) {
-                log.info(String.format("Metadata export destination: %s", currentExportBasePath.toString()));
-            }
-
-            if (exportMetadata) {
-                if (exportParentPath) {
-                    String[] parentNames = StringUtils.removeStart(currentParentPathAtSource, "/").split("/");
-                    ArrayDeque<ExportNode> parentNodes = new ArrayDeque<>();
-                    NodeRef currentNodeRef = startNode.nodeRef;
-                    while (parentNodes.size() < parentNames.length) {
-                        NodeRef parentNodeRef = nodeService.getPrimaryParent(currentNodeRef).getParentRef();
-                        ExportNode parentNode = exportNodeBuilder.constructExportNode(parentNodeRef);
-                        parentNodes.push(parentNode);
-                        currentNodeRef = parentNodeRef;
-                    }
-                    while (parentNodes.peek() != null) {
-                        ExportNode parentNode = parentNodes.pop();
-                        exportMetadataToFileStructure(parentNode);
-                        currentExportBasePath = currentExportBasePath.resolve(parentNode.name);
-                    }
+                log.info("******************************************");
+                log.info(String.format("TreeDump starting - %s", startDateTime));
+                log.info(String.format("             Node to export: %s (%s)", startNodeFullPath, startNode.nodeRef));
+                log.info(String.format("    Check existence on disk: %s", checkPhysicalExistence));
+                log.info(String.format("         Content store base: %s", contentStoreBase));
+                log.info(String.format("              Get cm:name's: %s", exportNodeBuilder.getUseCmName()));
+                log.info(String.format("       Root nodes read from: %s", rootNodeListInput));
+                log.info(String.format("         Results written to: %s", csvOutputDir));
+                log.info(String.format("         Metadata export is: %s", exportMetadata ? "ON" : "OFF"));
+                log.info(String.format("                  Paging is: %s", childQueryMode == ChildQueryMode.WITH_PAGING ? "ON" : "OFF"));
+                if (exportMetadata) {
+                    log.info(String.format("Metadata export destination: %s", currentExportBasePath.toString()));
                 }
-                exportMetadataToFileStructure(startNode);
-            }
-            dumpTreeTask = new TreeDumperTask(exportNodeSingleList, 0);
 
-            forkJoinPool.execute(dumpTreeTask);
-            long taskStartTime = System.currentTimeMillis();
-            do {
-                log.info("******************************************");
-                log.info(String.format("Main: Parallelism: %d", forkJoinPool.getParallelism()));
-                log.info(String.format("Main: Active Threads: %d", forkJoinPool.getActiveThreadCount()));
-                log.info(String.format("Main: Task Count: %d", forkJoinPool.getQueuedTaskCount()));
-                log.info(String.format("Main: Steal Count: %d", forkJoinPool.getStealCount()));
-                log.info(String.format("Total children found: %d", totalChildrenFound.get()));
-                log.info(String.format("Total files failed existence check: %d", totalExistenceCheckFailed.get()));
-                log.info("******************************************");
-                try {
+                if (exportMetadata) {
+                    if (exportParentPath) {
+                        String[] parentNames = StringUtils.removeStart(currentParentPathAtSource, "/").split("/");
+                        ArrayDeque<ExportNode> parentNodes = new ArrayDeque<>();
+                        NodeRef currentNodeRef = startNode.nodeRef;
+                        while (parentNodes.size() < parentNames.length) {
+                            NodeRef parentNodeRef = nodeService.getPrimaryParent(currentNodeRef).getParentRef();
+                            ExportNode parentNode = exportNodeBuilder.constructExportNode(parentNodeRef);
+                            parentNodes.push(parentNode);
+                            currentNodeRef = parentNodeRef;
+                        }
+                        while (parentNodes.peek() != null) {
+                            ExportNode parentNode = parentNodes.pop();
+                            exportMetadataToFileStructure(parentNode);
+                            currentExportBasePath = currentExportBasePath.resolve(parentNode.name);
+                        }
+                    }
+                    exportMetadataToFileStructure(startNode);
+                }
+                dumpTreeTask = new TreeDumperTask(exportNodeSingleList, 0);
+
+                forkJoinPool.execute(dumpTreeTask);
+                long taskStartTime = System.currentTimeMillis();
+                do {
+                    log.info("******************************************");
+                    log.info(String.format("Main: Parallelism: %d", forkJoinPool.getParallelism()));
+                    log.info(String.format("Main: Active Threads: %d", forkJoinPool.getActiveThreadCount()));
+                    log.info(String.format("Main: Task Count: %d", forkJoinPool.getQueuedTaskCount()));
+                    log.info(String.format("Main: Steal Count: %d", forkJoinPool.getStealCount()));
+                    log.info(String.format("Total children found: %d", totalChildrenFound.get()));
+                    log.info(String.format("Total files failed existence check: %d", totalExistenceCheckFailed.get()));
+                    log.info("******************************************");
                     TimeUnit.SECONDS.sleep(5);
-                } catch (InterruptedException e) {
-                    log.error("Execution interrupted", e);
-                }
-            } while (!dumpTreeTask.isDone());
+                } while (!dumpTreeTask.isDone());
 
-            addDoneSuffixToExportFolder(nodeExportId);
+                addDoneSuffixToExportFolder(nodeExportId);
 
-            log.info(String.format("TreeDump finished for node %s", startNodeFullPath));
-            log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - taskStartTime) / 1000));
+                log.info(String.format("TreeDump finished for node %s", startNodeFullPath));
+                log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - taskStartTime) / 1000));
 
-            flushThreadWriters();
+                flushThreadWriters();
+            }
+        }catch (InterruptedException e){
+            log.error("Execution was interrupted");
         }
-
-        closeThreadWriters();
+        finally {
+            closeThreadWriters();
+        }
 
         log.info("TreeDump finished");
         log.info(String.format("TreeDump elapsed time - %s seconds", (System.currentTimeMillis() - startTime) / 1000));
